@@ -8,9 +8,11 @@ Every AI coding session starts from zero. The agent re-reads files, re-derives c
 
 The cost is real: cache creation from repeated file reads and re-derivation accounts for ~50% of AI coding spend.
 
-## What Lore Does
+## What Lore Will Do
 
-Lore is a local MCP server backed by git repos (shared knowledge) and SQLite (individual + cache). A cheap LLM handles retrieval and capture — the expensive main model never touches Lore operations.
+> **Status: design phase — not yet implemented.** See [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the phased roadmap.
+
+Lore will be a local MCP server backed by git repos (shared knowledge) and SQLite (individual + cache). A cheap LLM handles retrieval and capture — the expensive main model never touches Lore operations.
 
 ```
 without lore                          with lore
