@@ -64,6 +64,31 @@ knowledge_history
 
 **Config — N-level hierarchy:**
 
+Two repo strategies supported: **single repo with branches** (simpler) or **separate repos** (stronger access control). `branch` field defaults to `main` when omitted.
+
+**Single repo + branches (default template — simpler for onboarding):**
+
+```json
+{
+  "lore": {
+    "hierarchy": [
+      {"level": "org", "priority": 1, "repo": "github.com/org/knowledge", "branch": "org"},
+      {"level": "product", "priority": 2, "repo": "github.com/org/knowledge", "branch": "product"},
+      {"level": "team", "priority": 3, "repo": "github.com/org/knowledge", "branch": "team"}
+    ],
+    "individual": {"priority": 100},
+    "sync_interval": "30m",
+    "store": {"type": "sqlite"},
+    "llm": {"provider": "ollama", "model": "phi4-mini"},
+    "git": {"provider": "github"}
+  }
+}
+```
+
+PR auth via GitHub branch rulesets — different required reviewers per branch.
+
+**Separate repos (enterprise template — stronger access control):**
+
 ```json
 {
   "lore": {
@@ -81,23 +106,32 @@ knowledge_history
 }
 ```
 
-Admin defines any number of levels. Default template is Org/Product/Team/Individual, but the structure is fully flexible:
+PR auth via CODEOWNERS + repo permissions. Read access restricted per repo.
+
+**More examples:**
 
 ```
-# Flat (small company):          # Deep (large enterprise):
-"hierarchy": [                   "hierarchy": [
-  {"level": "company", ...}        {"level": "org", ...},
-]                                  {"level": "division", ...},
-                                   {"level": "product", ...},
-# Solo developer:                  {"level": "team", ...},
-"hierarchy": []                    {"level": "project", ...}
-                                 ]
+# Solo developer:
+"hierarchy": []
+
+# Flat (small company, single repo):
+"hierarchy": [
+  {"level": "company", "priority": 1, "repo": "github.com/co/knowledge", "branch": "main"}
+]
+
+# Deep enterprise (separate repos):
+"hierarchy": [
+  {"level": "org", "priority": 1, "repo": "..."},
+  {"level": "division", "priority": 2, "repo": "..."},
+  {"level": "product", "priority": 3, "repo": "..."},
+  {"level": "team", "priority": 4, "repo": "..."}
+]
 
 # Multiple repos per level:
 "hierarchy": [
   {"level": "org", "priority": 1, "repo": "..."},
-  {"level": "team", "priority": 2, "repo": "github.com/org/team-myteam-knowledge"},
-  {"level": "team", "priority": 2, "repo": "github.com/org/team-otherteam-knowledge"}
+  {"level": "team", "priority": 2, "repo": "github.com/org/team-alpha-knowledge"},
+  {"level": "team", "priority": 2, "repo": "github.com/org/team-beta-knowledge"}
 ]
 ```
 
@@ -108,14 +142,15 @@ Admin defines any number of levels. Default template is Org/Product/Team/Individ
 class HierarchyLevel:
     level: str          # admin-defined name (free text)
     priority: int       # lower = broader scope
-    repos: list[str]    # git repo URLs
+    repo: str           # git repo URL
+    branch: str = "main"  # branch within repo (enables single-repo-with-branches pattern)
 
 class Config:
     hierarchy: list[HierarchyLevel]   # N levels, admin-defined
     individual_priority: int = 100     # always last
 ```
 
-Code never references "org" or "product" by name — everything is `level: str` + `priority: int`. Conflict resolution and lock behavior use priority values only.
+Code never references "org" or "product" by name — everything is `level: str` + `priority: int`. Sync engine pulls `repo@branch` regardless of strategy. Conflict resolution and lock behavior use priority values only.
 
 **Knowledge repo structure — directory path = key:**
 
