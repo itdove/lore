@@ -27,12 +27,13 @@ session starts                        session starts
 
 ### Key Features
 
-- **Git-backed shared knowledge** — N-level hierarchy of git repos (admin-defined: org, product, team, or any structure). PR-based review using familiar workflows. CODEOWNERS = locked entries.
+- **Git-backed shared knowledge** — levels 1-N of git repos (single repo with branches, or separate repos). PR-based review using familiar workflows. Branch rulesets or CODEOWNERS for access control.
 - **Local-first** — each developer runs their own MCP server with local SQLite. Git repos are the source of truth. No infrastructure to deploy.
-- **Bidirectional** — agents both store and retrieve knowledge. Session-end hook captures discoveries via cheap LLM. Individual knowledge writes immediately; shared knowledge goes through PR review.
-- **N-level hierarchy** — admin defines levels, names, and repos. Default template: Org/Product/Team/Individual. Solo developer to large enterprise — same codebase.
-- **Locked entries** — any level's maintainers can mark entries as immutable via frontmatter (`lock: true`). Lower levels cannot override. Compliance, security standards, architectural constraints stay enforced.
-- **Conflict tracking** — when non-locked entries conflict across levels, both are stored with bidirectional links. Lower hierarchy wins (more specific). Conflicts are queryable and reportable.
+- **Project-scoped config** — each project's `.lore/config.json` defines its hierarchy (committed to repo, shared with team). Global config registers projects + provider settings.
+- **Bidirectional** — agents both store and retrieve knowledge. Session-end hook captures discoveries via cheap LLM. Level 0 (individual) writes immediately; shared levels go through PR review.
+- **Numbered levels** — level 0 = individual (implicit, highest priority), levels 1-N = shared (admin-defined). Lower level = higher priority = wins in conflicts. No org/product/team assumptions — any structure fits.
+- **Locked entries** — any level's maintainers can mark entries as immutable via frontmatter (`lock: true`). Lower levels cannot override.
+- **Conflict tracking** — when non-locked entries conflict across levels, both are stored with bidirectional links. Lower level wins (more specific). Conflicts are queryable and reportable.
 - **Hybrid search** — FTS5 (MVP), with vector + BM25 + reciprocal rank fusion + LLM synthesis in Phase 2.
 - **Anti-poisoning** — shared writes require PR approval. Individual writes are immediate (your knowledge, your risk). No hallucination propagation to team store.
 - **Token cost reduction** — replaces N file reads + reasoning with 1 MCP call returning a short synthesis. Fewer tokens in context = less cache churn = lower cost.
@@ -42,15 +43,19 @@ session starts                        session starts
 ### Architecture
 
 ```
-GIT REPOS (N levels, admin-defined)         LOCAL (per developer)
-───────────────────────────────────         ────────────────────
+GIT REPOS (levels 1-N)                      LOCAL (per developer)
+──────────────────────                      ────────────────────
 
-level-1 repo (e.g. org)  ←── PR ───┐
-level-2 repo (e.g. product) PR ────┤      FastMCP Server (stdio)
-level-N repo (e.g. team) ←── PR ───┤      ├── SQLite DB (cache + individual)
-                                    │      ├── LLM (Ollama local or remote)
-individual knowledge ───────────────┘      └── periodic git pull + reindex
-(local only, always last)
+level N repo@branch ──── PR ────┐
+level 2 repo@branch ──── PR ────┤           FastMCP Server (stdio)
+level 1 repo@branch ──── PR ────┤           ├── SQLite DB (all projects)
+                                │           ├── LLM (Ollama local or remote)
+level 0 (individual) ───────────┘           └── periodic git pull + reindex
+(local only, highest priority)
+
+Project A/.lore/config.json → hierarchy for project A
+Project B/.lore/config.json → hierarchy for project B (can differ)
+~/.config/lore/config.json  → project registry + provider settings
 ```
 
 ### Knowledge Lifecycle
