@@ -5,6 +5,17 @@ from dataclasses import dataclass
 
 
 @dataclass
+class HistoryRecord:
+    id: str
+    knowledge_id: str
+    action: str
+    previous_value: str | None = None
+    actor: str | None = None
+    reason: str | None = None
+    timestamp: str | None = None
+
+
+@dataclass
 class KnowledgeEntry:
     key: str
     value: str
@@ -55,6 +66,9 @@ class StoreBackend(ABC):
 
     @abstractmethod
     def list_conflicts(self) -> list[KnowledgeEntry]: ...
+
+    @abstractmethod
+    def get_history(self, knowledge_id: str) -> list[HistoryRecord]: ...
 
     @abstractmethod
     def health(self) -> dict: ...
