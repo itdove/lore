@@ -4,7 +4,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 
-from lore.store.base import KnowledgeEntry, StoreBackend
+from lore.store.base import HistoryRecord, KnowledgeEntry, StoreBackend
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS knowledge (
@@ -257,6 +257,25 @@ class SQLiteStore(StoreBackend):
         )
         self._conn.execute("DELETE FROM knowledge WHERE key = ?", (key,))
         self._conn.commit()
+
+    def get_history(self, knowledge_id: str) -> list[HistoryRecord]:
+        rows = self._conn.execute(
+            "SELECT * FROM knowledge_history WHERE knowledge_id = ? "
+            "ORDER BY timestamp ASC",
+            (knowledge_id,),
+        ).fetchall()
+        return [
+            HistoryRecord(
+                id=row["id"],
+                knowledge_id=row["knowledge_id"],
+                action=row["action"],
+                previous_value=row["previous_value"],
+                actor=row["actor"],
+                reason=row["reason"],
+                timestamp=row["timestamp"],
+            )
+            for row in rows
+        ]
 
     def list_entries(
         self, tag: str | None = None, level: int | None = None
