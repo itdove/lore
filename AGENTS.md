@@ -131,6 +131,37 @@ See issue #2 and `DEVELOPMENT_PLAN.md` for full config specification.
 
 ---
 
+### Linting
+
+The project uses black and ruff enforced by CI. **Run these after finishing all implementations:**
+
+```bash
+# 1. Auto-fix formatting with black
+black src/lore/ tests/
+
+# 2. Auto-fix safe lint issues with ruff
+ruff check src/lore/ tests/ --fix
+
+# 3. Re-run black (ruff fixes may need reformatting)
+black src/lore/ tests/
+
+# 4. Verify all checks pass
+ruff check src/lore/ tests/
+black --check src/lore/ tests/
+```
+
+Ruff configuration is in `pyproject.toml` under `[tool.ruff]`.
+
+### Pre-commit Checks
+
+Before committing, ensure:
+1. All tests pass: `pytest tests/ -v`
+2. Code is formatted: `black --check src/lore/ tests/`
+3. No lint errors: `ruff check src/lore/ tests/`
+4. Run linters: `black`, `ruff check` (required — CI will block if they fail)
+
+---
+
 ### Code Style
 
 - Python 3.10+ (use `from __future__ import annotations` for forward refs)
@@ -144,4 +175,4 @@ See issue #2 and `DEVELOPMENT_PLAN.md` for full config specification.
 - Keep dependencies minimal for MVP
 - No CLI framework (argparse only)
 - No web framework until NiceGUI phase
-- Dev dependencies: pytest, pytest-cov
+- Dev dependencies: pytest, pytest-cov, black, ruff

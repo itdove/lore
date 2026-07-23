@@ -1,0 +1,88 @@
+name: Build Wheel
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set version suffix
+        run: |
+          BASE_VERSION=$(python -c "
+          import re
+          with open('pyproject.toml') as f:
+              m = re.search(r'version = \"([^\"]+)\"', f.read())
+          print(m.group(1))
+          ")
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SUFFIX="+pr${{ github.event.pull_request.number }}"
+            TAG_LABEL="${{ github.event.pull_request.number }}"
+          else
+            PR_NUM=$(git log -1 --pretty=%s | grep -oP '#\K[0-9]+' | head -1 || true)
+            if [ -n "$PR_NUM" ]; then
+              SUFFIX="+pr${PR_NUM}"
+              TAG_LABEL="${PR_NUM}"
+            else
+              SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+              SUFFIX="+main.${SHORT_SHA}"
+              TAG_LABEL="main.${SHORT_SHA}"
+            fi
+          fi
+          echo "VERSION_SUFFIX=${SUFFIX}" >> $GITHUB_ENV
+          echo "FULL_VERSION=${BASE_VERSION}${SUFFIX}" >> $GITHUB_ENV
+          echo "RC_TAG=rc-${BASE_VERSION}-${TAG_LABEL}" >> $GITHUB_ENV
+
+      - name: Build wheel with version suffix
+        run: |
+          pip install build
+          python -c "
+          import re
+          with open('pyproject.toml', 'r') as f:
+              content = f.read()
+          content = re.sub(
+              r'version = \"([^\"]+)\"',
+              r'version = \"\1${{ env.VERSION_SUFFIX }}\"',
+              content, count=1
+          )
+          with open('pyproject.toml', 'w') as f:
+              f.write(content)
+          "
+          python -m build --wheel
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lore-mcp-dev-wheel
+          path: dist/*.whl
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
+
+      - name: Create RC release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.RC_TAG }}
+          name: "RC: ${{ env.FULL_VERSION }}"
+          body: |
+            Development build — for testing only.
+
+            ```bash
+            pip install ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ env.RC_TAG }}/$(ls dist/*.whl | xargs basename)
+            ```
+          prerelease: true
+          files: dist/*.whl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
