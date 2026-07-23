@@ -1,7 +1,6 @@
 import json
 import os
 import time
-from pathlib import Path
 from unittest import mock
 
 from lore.config.loaders import (
@@ -11,7 +10,6 @@ from lore.config.loaders import (
     load_global_config,
     load_project_config,
 )
-from lore.config.utils import config_path
 
 
 def test_load_json_missing_file(tmp_path):
@@ -59,10 +57,13 @@ def test_load_global_config_valid(tmp_path):
 
 
 def test_load_global_config_inline_overlay(tmp_path):
-    with mock.patch.dict(os.environ, {
-        "LORE_CONFIG_DIR": str(tmp_path),
-        "LORE_CONFIG_INLINE": json.dumps({"lore": {"sync_interval": "5m"}}),
-    }):
+    with mock.patch.dict(
+        os.environ,
+        {
+            "LORE_CONFIG_DIR": str(tmp_path),
+            "LORE_CONFIG_INLINE": json.dumps({"lore": {"sync_interval": "5m"}}),
+        },
+    ):
         _clear_config_cache()
         cfg = tmp_path / "config.json"
         cfg.write_text(json.dumps({"lore": {"projects": ["/a"]}}))
@@ -72,10 +73,13 @@ def test_load_global_config_inline_overlay(tmp_path):
 
 
 def test_load_global_config_inline_invalid_json(tmp_path):
-    with mock.patch.dict(os.environ, {
-        "LORE_CONFIG_DIR": str(tmp_path),
-        "LORE_CONFIG_INLINE": "not json",
-    }):
+    with mock.patch.dict(
+        os.environ,
+        {
+            "LORE_CONFIG_DIR": str(tmp_path),
+            "LORE_CONFIG_INLINE": "not json",
+        },
+    ):
         _clear_config_cache()
         cfg = tmp_path / "config.json"
         cfg.write_text(json.dumps({"lore": {"projects": ["/a"]}}))
@@ -92,9 +96,9 @@ def test_load_project_config_valid(tmp_path):
     lore_dir = tmp_path / ".lore"
     lore_dir.mkdir()
     cfg = lore_dir / "config.json"
-    cfg.write_text(json.dumps({
-        "lore": {"hierarchy": [{"level": 1, "repo": "github.com/org/k"}]}
-    }))
+    cfg.write_text(
+        json.dumps({"lore": {"hierarchy": [{"level": 1, "repo": "github.com/org/k"}]}})
+    )
     result = load_project_config(tmp_path)
     assert result["lore"]["hierarchy"][0]["level"] == 1
 

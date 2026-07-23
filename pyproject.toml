@@ -18,6 +18,8 @@ lore = "lore.cli:main"
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "black>=26,<27",
+    "ruff",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -26,3 +28,14 @@ packages = ["src/lore"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]

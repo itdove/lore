@@ -2,7 +2,14 @@ import os
 from pathlib import Path
 from unittest import mock
 
-from lore.config.utils import cache_dir, config_dir, config_path, data_dir, db_path, state_dir
+from lore.config.utils import (
+    cache_dir,
+    config_dir,
+    config_path,
+    data_dir,
+    db_path,
+    state_dir,
+)
 
 
 def test_config_dir_uses_lore_config_dir_env(tmp_path):
