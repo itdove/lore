@@ -9,18 +9,31 @@ Incremental delivery. Each phase is independently usable. MVP is fully functiona
 ## Architecture Overview
 
 ```
-GIT REPOS (N levels, admin-defined)         LOCAL (per developer)
-───────────────────────────────────         ────────────────────
+GIT REPOS (levels 1-N, admin-defined)       LOCAL (per developer)
+─────────────────────────────────────       ────────────────────
 
-level-1 repo (e.g. org)  ←── PR ───┐
-level-2 repo (e.g. product) PR ────┤      FastMCP Server (stdio)
-level-N repo (e.g. team) ←── PR ───┤      ├── SQLite DB (cache + individual)
-                                    │      ├── LLM (Ollama local or remote)
-individual knowledge ───────────────┘      └── periodic git pull + reindex
-(local only, always last)
+level N repo@branch ──── PR ────┐
+level 2 repo@branch ──── PR ────┤           FastMCP Server (stdio)
+level 1 repo@branch ──── PR ────┤           ├── SQLite DB (all entries, all projects)
+                                │           ├── LLM (Ollama local or remote)
+level 0 (individual) ───────────┘           └── periodic git pull + reindex
+(local only, highest priority)
 ```
 
-**N-level hierarchy:** admin defines their own structure. Number of levels, level names, and repos are fully configurable. Individual is always the last level (highest priority, local only).
+**Level numbering:**
+- Level 0 = individual (implicit, always exists, local SQLite, highest priority)
+- Level 1 = closest shared level (most specific)
+- Level N = broadest scope (lowest priority)
+- Lower level number = higher priority = wins in conflicts (unless locked from above)
+
+**Two config files:**
+
+| Config | Location | Contains | Committed? |
+|--------|----------|----------|-----------|
+| Global | `$XDG_CONFIG_HOME/lore/config.json` | Project registry, LLM/store/git settings | No (per-developer) |
+| Project | `.lore/config.json` | Hierarchy levels + repos/branches for THIS project | Yes (shared with team) |
+| Protocol | `.lore/LORE.md` | Agent instructions | Yes (shared with team) |
+| DB | `$XDG_DATA_HOME/lore/knowledge.db` | All entries across all projects | No (per-developer cache) |
 
 **XDG paths:**
 
@@ -40,8 +53,10 @@ knowledge
 ├── key              TEXT              -- type:domain:slug (derived from file path)
 ├── value            TEXT              -- knowledge content
 ├── tags             TEXT              -- comma-separated
-├── level            TEXT              -- admin-defined level name (e.g. "org", "product", "team", "individual")
-├── priority         INTEGER           -- derived from hierarchy position (lower = broader scope)
+├── level            INTEGER NOT NULL  -- 0=individual, 1-N=shared levels
+├── level_name       TEXT NULL         -- optional display name (e.g. "team", "product")
+├── repo_url         TEXT NULL         -- which knowledge repo this came from
+├── repo_branch      TEXT NULL         -- which branch
 ├── locked           BOOLEAN DEFAULT FALSE
 ├── conflict_with    TEXT NULL         -- references knowledge.id of conflicting entry
 ├── conflict_status  TEXT NULL         -- "active" (wins) | "overridden" (excluded)
@@ -62,60 +77,113 @@ knowledge_history
 └── timestamp        TIMESTAMP
 ```
 
-**Config — N-level hierarchy:**
+**Global config** (`$XDG_CONFIG_HOME/lore/config.json`) — per-developer, not committed:
+
+```json
+{
+  "lore": {
+    "projects": [
+      "/home/dev/project-A",
+      "/home/dev/project-B"
+    ],
+    "store": {"type": "sqlite"},
+    "llm": {"provider": "ollama", "model": "phi4-mini"},
+    "git": {"provider": "github"},
+    "sync_interval": "30m"
+  }
+}
+```
+
+`projects` array is populated by `lore init` — each project registers itself.
+
+**Project config** (`.lore/config.json`) — committed to project repo, shared with team:
 
 ```json
 {
   "lore": {
     "hierarchy": [
-      {"level": "org", "priority": 1, "repo": "github.com/org/org-knowledge"},
-      {"level": "product", "priority": 2, "repo": "github.com/org/product-myproduct-knowledge"},
-      {"level": "team", "priority": 3, "repo": "github.com/org/team-myteam-knowledge"}
-    ],
-    "individual": {"priority": 100},
-    "sync_interval": "30m",
-    "store": {"type": "sqlite"},
-    "llm": {"provider": "ollama", "model": "phi4-mini"},
-    "git": {"provider": "github"}
+      {"level": 1, "name": "team", "repo": "github.com/org/knowledge", "branch": "team"},
+      {"level": 2, "name": "product", "repo": "github.com/org/knowledge", "branch": "product"},
+      {"level": 3, "name": "company", "repo": "github.com/org/knowledge", "branch": "org"}
+    ]
   }
 }
 ```
 
-Admin defines any number of levels. Default template is Org/Product/Team/Individual, but the structure is fully flexible:
+Two repo strategies: **single repo with branches** (default, simpler — PR auth via GitHub branch rulesets) or **separate repos** (enterprise — PR auth via CODEOWNERS + repo permissions).
+
+**Examples:**
 
 ```
-# Flat (small company):          # Deep (large enterprise):
-"hierarchy": [                   "hierarchy": [
-  {"level": "company", ...}        {"level": "org", ...},
-]                                  {"level": "division", ...},
-                                   {"level": "product", ...},
-# Solo developer:                  {"level": "team", ...},
-"hierarchy": []                    {"level": "project", ...}
-                                 ]
+# Solo developer (level 0 only):
+"hierarchy": []
 
-# Multiple repos per level:
+# Small team (single repo, one branch):
 "hierarchy": [
-  {"level": "org", "priority": 1, "repo": "..."},
-  {"level": "team", "priority": 2, "repo": "github.com/org/team-myteam-knowledge"},
-  {"level": "team", "priority": 2, "repo": "github.com/org/team-otherteam-knowledge"}
+  {"level": 1, "repo": "github.com/team/knowledge"}
+]
+
+# Single repo with branches (default):
+"hierarchy": [
+  {"level": 1, "name": "team", "repo": "github.com/org/knowledge", "branch": "team"},
+  {"level": 2, "name": "product", "repo": "github.com/org/knowledge", "branch": "product"},
+  {"level": 3, "name": "company", "repo": "github.com/org/knowledge", "branch": "org"}
+]
+
+# Separate repos (enterprise):
+"hierarchy": [
+  {"level": 1, "name": "team", "repo": "github.com/org/team-knowledge"},
+  {"level": 2, "name": "product", "repo": "github.com/org/product-knowledge"},
+  {"level": 3, "name": "company", "repo": "github.com/org/org-knowledge"}
+]
+
+# Multiple repos at same level:
+"hierarchy": [
+  {"level": 1, "repo": "github.com/org/team-alpha-knowledge"},
+  {"level": 1, "repo": "github.com/org/team-beta-knowledge"},
+  {"level": 2, "repo": "github.com/org/product-knowledge"}
 ]
 ```
 
-**Core data model — level-agnostic:**
+**Core data model:**
 
 ```python
 @dataclass
 class HierarchyLevel:
-    level: str          # admin-defined name (free text)
-    priority: int       # lower = broader scope
-    repos: list[str]    # git repo URLs
+    level: int            # 1-N (0 = individual, implicit)
+    repo: str             # git repo URL
+    branch: str = "main"  # branch within repo
+    name: str | None = None  # display name (optional, for UI/reports)
 
-class Config:
-    hierarchy: list[HierarchyLevel]   # N levels, admin-defined
-    individual_priority: int = 100     # always last
+@dataclass
+class GlobalConfig:
+    projects: list[str]   # registered project paths
+    store: StoreConfig
+    llm: LLMConfig
+    git: GitConfig
+    sync_interval: str = "30m"
+
+@dataclass
+class ProjectConfig:
+    hierarchy: list[HierarchyLevel]
 ```
 
-Code never references "org" or "product" by name — everything is `level: str` + `priority: int`. Conflict resolution and lock behavior use priority values only.
+**MCP server startup:**
+1. Read global config → provider settings + project list
+2. For each project: read `.lore/config.json` → hierarchy
+3. Sync all unique `repo@branch` across all projects
+4. On query → detect CWD → match to project → use that project's hierarchy for scoping
+
+**Query scoping:**
+```python
+def query_knowledge(self, topic):
+    project_config = get_project_config(cwd=self.working_dir)
+    allowed = [(h.repo, h.branch) for h in project_config.hierarchy]
+    results = self.store.query_fts(topic, filter_repos=allowed, include_level_0=True)
+    # level 0 (individual) always included
+```
+
+Code never references level names — everything is `level: int`. Lower level = higher priority = wins in conflicts (unless locked from above).
 
 **Knowledge repo structure — directory path = key:**
 
@@ -153,10 +221,12 @@ Why: compliance requirement from security audit Q2 2026.
 *MCP server:*
 - FastMCP server with bundled `LORE.md` injected via `instructions=`
 - Local SQLite with FTS5 (`$XDG_DATA_HOME/lore/knowledge.db`)
-- Config at `$XDG_CONFIG_HOME/lore/config.json` with project override at `.lore/config.json`
+- Global config: `$XDG_CONFIG_HOME/lore/config.json` (project registry + provider settings)
+- Project config: `.lore/config.json` (hierarchy for this project, committed to repo)
+- MCP server reads global config → loads all registered projects → serves per-project queries based on CWD
 
 *Git knowledge repos:*
-- N-level hierarchy of git repos, admin-defined (default: org/product/team)
+- Levels 1-N of git repos, defined in each project's `.lore/config.json`
 - Directory structure = key format: `<type>/<domain>/<slug>.md` → `type:domain:slug`
 - Frontmatter: `lock`, `tags`, `created_by`
 - CODEOWNERS = locked entry enforcement (repo maintainers per level)
@@ -193,7 +263,7 @@ Why: compliance requirement from security audit Q2 2026.
 
 *PR-based review:*
 - Session-end capture creates PRs in appropriate knowledge repo
-- Product owner / team lead reviews via normal git diff
+- Level maintainer reviews via normal git diff
 - Merge triggers next `lore sync` to pick up changes
 - PR rejected → individual entry stays in local SQLite (still useful personally)
 - PR merged → on next sync, individual entry with same key removed (promoted to shared)
@@ -324,7 +394,7 @@ Why: compliance requirement from security audit Q2 2026.
 **Adds:**
 - HTTP transport for MCP server (alongside stdio)
 - OIDC auth provider (JWT validation on every MCP call)
-- Group → role mapping: IdP groups → Lore roles (user, product_owner, org_admin)
+- Group → role mapping: IdP groups → Lore roles (user, level_maintainer, admin)
 - Tested IdPs: Azure AD / Entra ID, Okta, Keycloak, Google Workspace
 - Postgres RLS policies for Supabase backend (enforced at DB level)
 - `auth.provider` config: `oidc` / `supabase` / `none`
@@ -344,7 +414,7 @@ Why: compliance requirement from security audit Q2 2026.
 - Admin panel: manage repos, scopes, locked entries
 - Webhook-driven sync (instant, replaces polling)
 
-**Deliverable:** product owners and org admins get visibility and control without CLI.
+**Deliverable:** level maintainers and admins get visibility and control without CLI.
 
 ---
 
@@ -400,9 +470,9 @@ lore migrate-hierarchy --from old-config.json --to new-config.json --dry-run
 → Scanning knowledge DB...
 → Found 247 entries
 → Level mapping:
-    "project" (old) → "team" (new): 182 entries
-    "product" (old) → "product" (new): 45 entries (unchanged)
-    "org" (old) → "org" (new): 20 entries (unchanged)
+    level 1 (old) → level 1 (new): 182 entries (repos changed)
+    level 2 (old) → level 2 (new): 45 entries (unchanged)
+    level 3 (old) → split into level 3 + level 4: 20 entries
 → Unmapped: 0 entries
 → Dry run complete. Run without --dry-run to apply.
 ```
