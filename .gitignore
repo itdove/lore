@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Release
+.release-config.json
+
+# Claude Code — only track release skill
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/release/
+
+# Temporary
+*.tmp
+*.log

@@ -10,9 +10,9 @@ The cost is real: cache creation from repeated file reads and re-derivation acco
 
 ## What Lore Will Do
 
-> **Status: design phase — not yet implemented.** See [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the phased roadmap.
+> **Status: MVP Sprint 1 in progress.** Config module implemented. See [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the phased roadmap.
 
-Lore will be a local MCP server backed by git repos (shared knowledge) and SQLite (individual + cache). A cheap LLM handles retrieval and capture — the expensive main model never touches Lore operations.
+Lore is a local MCP server backed by git repos (shared knowledge) and SQLite (individual + cache). A cheap LLM handles retrieval and capture — the expensive main model never touches Lore operations.
 
 ```
 without lore                          with lore
@@ -70,9 +70,21 @@ SESSION END    → cheap LLM extracts candidates from transcript
                → PR merged → individual entry with same key auto-cleaned
 ```
 
+## Getting Started
+
+```bash
+# Clone and install
+git clone https://github.com/itdove/lore.git
+cd lore
+pip install -e ".[dev]"
+
+# Run tests
+python -m pytest tests/ -v
+```
+
 ## Status
 
-Design phase. See [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the phased roadmap and [LORE_INITIATIVE.md](LORE_INITIATIVE.md) for the full initiative proposal including market comparison.
+MVP Sprint 1 in progress — config module implemented (XDG paths, project hierarchy, mtime caching). See [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the phased roadmap.
 
 ## Landscape
 
