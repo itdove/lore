@@ -56,9 +56,11 @@ class TestCli:
     def test_mcp_server_subcommand_parsed(self):
         from lore.cli import main
 
-        with patch("lore.cli._cmd_mcp_server") as mock_cmd:
-            main(["mcp-server"])
+        with patch("lore.cli._cmd_mcp_server", return_value=0) as mock_cmd:
+            with pytest.raises(SystemExit) as exc_info:
+                main(["mcp-server"])
             mock_cmd.assert_called_once()
+            assert exc_info.value.code == 0
 
     def test_no_subcommand_exits(self):
         from lore.cli import main

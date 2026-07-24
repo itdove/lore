@@ -9,6 +9,7 @@ from mcp.server.fastmcp import FastMCP
 from lore.config.manager import get_global_config
 from lore.config.utils import db_path
 from lore.store.base import KnowledgeEntry
+from lore.store.priority import resolve_priority
 from lore.store.sqlite import SQLiteStore, create_schema
 
 
@@ -30,21 +31,6 @@ def _entry_to_dict(entry: KnowledgeEntry) -> dict:
     d = asdict(entry)
     d.pop("embedding", None)
     return d
-
-
-def _resolve_priority(entries: list[KnowledgeEntry]) -> list[KnowledgeEntry]:
-    by_key: dict[str, KnowledgeEntry] = {}
-    for entry in entries:
-        existing = by_key.get(entry.key)
-        if existing is None:
-            by_key[entry.key] = entry
-        elif entry.locked and not existing.locked:
-            by_key[entry.key] = entry
-        elif not entry.locked and existing.locked:
-            pass
-        elif entry.level > existing.level:
-            by_key[entry.key] = entry
-    return list(by_key.values())
 
 
 def create_server() -> FastMCP:
@@ -73,7 +59,7 @@ def create_server() -> FastMCP:
             filter_levels = [int(level)]
 
         raw_results = store.query_fts(topic, limit=50, filter_levels=filter_levels)
-        resolved = _resolve_priority(raw_results)
+        resolved = resolve_priority(raw_results)
 
         results = [
             {

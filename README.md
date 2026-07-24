@@ -8,9 +8,7 @@ Every AI coding session starts from zero. The agent re-reads files, re-derives c
 
 The cost is real: cache creation from repeated file reads and re-derivation accounts for ~50% of AI coding spend.
 
-## What Lore Will Do
-
-> **Status: MVP Sprint 1 in progress.** Config module implemented. See [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the phased roadmap.
+## What Lore Does
 
 Lore is a local MCP server backed by git repos (shared knowledge) and SQLite (individual + cache). A cheap LLM handles retrieval and capture — the expensive main model never touches Lore operations.
 
@@ -34,7 +32,7 @@ session starts                        session starts
 - **Numbered levels** — level 0 = individual (implicit, highest priority), levels 1-N = shared (admin-defined). Lower level = higher priority = wins in conflicts. No org/product/team assumptions — any structure fits.
 - **Locked entries** — any level's maintainers can mark entries as immutable via frontmatter (`lock: true`). Lower levels cannot override.
 - **Conflict tracking** — when non-locked entries conflict across levels, both are stored with bidirectional links. Lower level wins (more specific). Conflicts are queryable and reportable.
-- **Hybrid search** — FTS5 (MVP), with vector + BM25 + reciprocal rank fusion + LLM synthesis in Phase 2.
+- **Hybrid search** — FTS5 (implemented), with vector + BM25 + reciprocal rank fusion + LLM synthesis planned for Phase 2.
 - **Anti-poisoning** — shared writes require PR approval. Individual writes are immediate (your knowledge, your risk). No hallucination propagation to team store.
 - **Token cost reduction** — replaces N file reads + reasoning with 1 MCP call returning a short synthesis. Fewer tokens in context = less cache churn = lower cost.
 - **13-agent hooks** — Claude Code, Cursor, Copilot, Codex, Windsurf, Gemini CLI, Cline, Kiro, Augment, OpenCode, AiderDesk, OpenClaw, Junie. Hook adapter architecture adapted from [ai-guardian](https://github.com/itdove/ai-guardian).
@@ -78,13 +76,69 @@ git clone https://github.com/itdove/lore.git
 cd lore
 pip install -e ".[dev]"
 
-# Run tests
+# Initialize lore in your project
+cd /path/to/your/project
+lore init
+```
+
+`lore init` walks you through setup:
+1. Creates XDG directories and global config
+2. Prompts for shared hierarchy levels (repo URLs + branches), or reuse an existing project's hierarchy
+3. Creates `.lore/config.json` in your project
+4. Sets up the SQLite database
+5. Registers the MCP server in `~/.claude.json`
+6. Runs the first sync
+
+### CLI Commands
+
+```bash
+# Initialize lore in current project directory
+lore init
+
+# Sync all knowledge repos across registered projects
+lore sync
+lore sync --verbose
+
+# Search knowledge scoped to current project's hierarchy
+lore search "authentication patterns"
+
+# Show conflict report
+lore conflicts
+
+# Start MCP server (used by AI agents, not run directly)
+lore mcp-server
+```
+
+### MCP Tools
+
+Once the MCP server is registered, AI agents have access to:
+
+| Tool | Description |
+|------|-------------|
+| `query_knowledge` | FTS5 search with priority resolution across hierarchy levels |
+| `list_knowledge` | List entries with optional tag/level filters and history |
+| `list_conflicts` | Show all conflicting entries with both sides linked |
+| `health_check` | Entry counts per level, conflict count, staleness info |
+
+### Running Tests
+
+```bash
 python -m pytest tests/ -v
 ```
 
 ## Status
 
-MVP Sprint 1 in progress — config module implemented (XDG paths, project hierarchy, mtime caching). See [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the phased roadmap.
+**MVP Sprint 1 complete.** Core functionality implemented:
+
+- Config loading with XDG paths and project hierarchy ([#2](https://github.com/itdove/lore/issues/2))
+- SQLite schema with FTS5 full-text search ([#3](https://github.com/itdove/lore/issues/3))
+- FastMCP server with bundled LORE.md instructions ([#4](https://github.com/itdove/lore/issues/4))
+- MCP tool handlers: query, list, conflicts, health ([#5](https://github.com/itdove/lore/issues/5))
+- Git repo sync engine: clone/pull, parse markdown frontmatter, index to SQLite ([#6](https://github.com/itdove/lore/issues/6))
+- CLI: `lore init`, `lore sync`, `lore search`, `lore conflicts`, `lore mcp-server` ([#7](https://github.com/itdove/lore/issues/7))
+- CI/CD with pytest, black, ruff ([#22](https://github.com/itdove/lore/issues/22))
+
+See [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the phased roadmap.
 
 ## Landscape
 
