@@ -17,6 +17,8 @@ class GitRepoManager:
     def repo_to_url(repo: str) -> str:
         if repo.startswith(("https://", "http://", "git@", "ssh://")):
             return repo
+        if repo.startswith(("/", "./", "../", "~")):
+            return repo
         return f"https://{repo}"
 
     @staticmethod
