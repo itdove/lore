@@ -751,10 +751,11 @@ def test_hook_recall_outputs_context(store, capsys):
                 "lore.config.manager.get_project_config",
                 return_value=mock.MagicMock(hierarchy=[]),
             ):
-                with mock.patch("sys.stdin", io.StringIO(payload)):
-                    from lore.cli import _cmd_hook_recall
+                with mock.patch("lore.cli._maybe_trigger_auto_sync"):
+                    with mock.patch("sys.stdin", io.StringIO(payload)):
+                        from lore.cli import _cmd_hook_recall
 
-                    rc = _cmd_hook_recall(argparse.Namespace())
+                        rc = _cmd_hook_recall(argparse.Namespace())
 
     assert rc == 0
     out = capsys.readouterr().out
@@ -782,10 +783,11 @@ def test_hook_recall_no_results(store, capsys):
                 "lore.config.manager.get_project_config",
                 return_value=mock.MagicMock(hierarchy=[]),
             ):
-                with mock.patch("sys.stdin", io.StringIO(payload)):
-                    from lore.cli import _cmd_hook_recall
+                with mock.patch("lore.cli._maybe_trigger_auto_sync"):
+                    with mock.patch("sys.stdin", io.StringIO(payload)):
+                        from lore.cli import _cmd_hook_recall
 
-                    rc = _cmd_hook_recall(argparse.Namespace())
+                        rc = _cmd_hook_recall(argparse.Namespace())
 
     assert rc == 0
     assert capsys.readouterr().out == ""
@@ -848,3 +850,185 @@ def test_parse_value_empty_string():
     from lore.cli import _parse_value
 
     assert _parse_value("") == ""
+
+
+# =====================================================================
+# lore sync --status
+# =====================================================================
+
+
+def test_sync_status_never_synced(capsys):
+    from lore.cli import _cmd_sync_status
+
+    rc = _cmd_sync_status(argparse.Namespace())
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Last sync: never" in out
+    assert "STALE" in out
+
+
+def test_sync_status_with_state(tmp_path, capsys):
+    from lore.config.utils import state_dir
+
+    state_file = state_dir() / "sync-state.json"
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.write_text(
+        json.dumps(
+            {
+                "repos": {
+                    "a": {
+                        "repo": "r1",
+                        "branch": "main",
+                        "last_commit": "s1",
+                        "last_sync": "2020-01-01T00:00:00+00:00",
+                        "file_hashes": {},
+                    }
+                }
+            }
+        )
+    )
+
+    from lore.cli import _cmd_sync_status
+
+    rc = _cmd_sync_status(argparse.Namespace())
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "2020-01-01" in out
+    assert "STALE" in out
+    assert "Auto-sync: enabled" in out
+
+
+# =====================================================================
+# lore sync lock
+# =====================================================================
+
+
+def test_sync_fails_when_locked(capsys):
+    import time
+
+    from lore.config.utils import state_dir
+
+    lock_path = state_dir() / "sync.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    import os
+
+    lock_path.write_text(f"{os.getpid()}\n{time.monotonic()}")
+
+    from lore.cli import _cmd_sync
+
+    rc = _cmd_sync(argparse.Namespace(status=False, force=False, verbose=False))
+    assert rc == 1
+    assert "already in progress" in capsys.readouterr().err
+
+
+# =====================================================================
+# auto-sync trigger
+# =====================================================================
+
+
+def test_auto_sync_triggers_when_stale():
+    import subprocess
+
+    from lore.cli import _maybe_trigger_auto_sync
+
+    with mock.patch(
+        "lore.config.manager.get_global_config",
+        return_value=mock.MagicMock(
+            sync=mock.MagicMock(
+                auto_sync=True,
+                on_session_start=True,
+                staleness_threshold_minutes=60,
+            )
+        ),
+    ):
+        with mock.patch("lore.sync.lock.SyncLockManager.is_locked", False):
+            with mock.patch(
+                "lore.sync.state.SyncStateManager.last_sync_time",
+                return_value=None,
+            ):
+                with mock.patch("subprocess.Popen") as mock_popen:
+                    _maybe_trigger_auto_sync()
+
+    mock_popen.assert_called_once_with(
+        ["lore", "sync"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def test_auto_sync_skips_when_disabled():
+    from lore.cli import _maybe_trigger_auto_sync
+
+    with mock.patch(
+        "lore.config.manager.get_global_config",
+        return_value=mock.MagicMock(
+            sync=mock.MagicMock(auto_sync=False, on_session_start=True)
+        ),
+    ):
+        with mock.patch("subprocess.Popen") as mock_popen:
+            _maybe_trigger_auto_sync()
+
+    mock_popen.assert_not_called()
+
+
+def test_auto_sync_skips_when_fresh():
+    from datetime import datetime, timezone
+
+    from lore.cli import _maybe_trigger_auto_sync
+
+    fresh = datetime.now(timezone.utc).isoformat()
+
+    with mock.patch(
+        "lore.config.manager.get_global_config",
+        return_value=mock.MagicMock(
+            sync=mock.MagicMock(
+                auto_sync=True,
+                on_session_start=True,
+                staleness_threshold_minutes=60,
+            )
+        ),
+    ):
+        with mock.patch("lore.sync.lock.SyncLockManager.is_locked", False):
+            with mock.patch(
+                "lore.sync.state.SyncStateManager.last_sync_time",
+                return_value=fresh,
+            ):
+                with mock.patch("subprocess.Popen") as mock_popen:
+                    _maybe_trigger_auto_sync()
+
+    mock_popen.assert_not_called()
+
+
+def test_auto_sync_skips_when_locked():
+    from lore.cli import _maybe_trigger_auto_sync
+
+    with mock.patch(
+        "lore.config.manager.get_global_config",
+        return_value=mock.MagicMock(
+            sync=mock.MagicMock(
+                auto_sync=True,
+                on_session_start=True,
+                staleness_threshold_minutes=60,
+            )
+        ),
+    ):
+        with mock.patch(
+            "lore.sync.lock.SyncLockManager.is_locked",
+            new_callable=mock.PropertyMock,
+            return_value=True,
+        ):
+            with mock.patch("subprocess.Popen") as mock_popen:
+                _maybe_trigger_auto_sync()
+
+    mock_popen.assert_not_called()
+
+
+def test_auto_sync_never_crashes():
+    from lore.cli import _maybe_trigger_auto_sync
+
+    with mock.patch(
+        "lore.config.manager.get_global_config",
+        side_effect=RuntimeError("config broken"),
+    ):
+        _maybe_trigger_auto_sync()

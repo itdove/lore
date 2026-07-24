@@ -212,7 +212,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
     if hierarchy:
         print("\nRunning first sync...")
-        _cmd_sync(argparse.Namespace(verbose=False))
+        _cmd_sync(argparse.Namespace(verbose=False, status=False, force=True))
     else:
         print("\n  No hierarchy levels — skipping sync (solo mode)")
 
@@ -228,35 +228,78 @@ def _cmd_mcp_server(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_sync(args: argparse.Namespace) -> int:
+def _cmd_sync_status(args: argparse.Namespace) -> int:
     from lore.config.manager import get_global_config
-    from lore.config.utils import cache_dir, state_dir
+    from lore.config.utils import sync_lock_path, sync_state_path
+    from lore.sync.lock import SyncLockManager
+    from lore.sync.state import SyncStateManager, is_stale
+
+    config = get_global_config()
+    state_mgr = SyncStateManager(sync_state_path())
+    lock_mgr = SyncLockManager(sync_lock_path())
+
+    last_sync = state_mgr.last_sync_time()
+    threshold = config.sync.staleness_threshold_minutes
+    stale = is_stale(last_sync, threshold)
+
+    print(f"Last sync: {last_sync or 'never'}")
+    print(f"Staleness threshold: {threshold} minutes")
+    print(f"Status: {'STALE' if stale else 'FRESH'}")
+    print(f"Auto-sync: {'enabled' if config.sync.auto_sync else 'disabled'}")
+    print(f"Sync in progress: {'yes' if lock_mgr.is_locked else 'no'}")
+    return 0
+
+
+def _cmd_sync(args: argparse.Namespace) -> int:
+    if getattr(args, "status", False):
+        return _cmd_sync_status(args)
+
+    from lore.config.manager import get_global_config
+    from lore.config.utils import (
+        repos_cache_path,
+        sync_lock_path,
+        sync_log_path,
+        sync_state_path,
+    )
     from lore.sync.engine import SyncEngine
     from lore.sync.git import GitRepoManager
+    from lore.sync.lock import SyncLockManager
     from lore.sync.log import SyncLogWriter
-    from lore.sync.state import SyncStateManager
+    from lore.sync.state import SyncStateManager, is_stale
 
-    store = _get_store()
     config = get_global_config()
-    git_mgr = GitRepoManager(cache_dir() / "repos")
-    state_mgr = SyncStateManager(state_dir() / "sync-state.json")
-    log_writer = SyncLogWriter(state_dir() / "sync.md")
+    state_mgr = SyncStateManager(sync_state_path())
 
-    engine = SyncEngine(store, git_mgr, state_mgr, log_writer)
-    result = engine.sync_all(config.projects)
+    if not getattr(args, "force", False):
+        last_sync = state_mgr.last_sync_time()
+        if not is_stale(last_sync, config.sync.staleness_threshold_minutes):
+            print("Knowledge base is fresh. Use --force to sync anyway.")
+            return 0
 
-    print(
-        f"Sync complete: {result.created} created, {result.updated} updated, "
-        f"{result.deleted} deleted, {result.promoted} promoted"
-    )
-    if result.errors:
-        for err in result.errors:
-            print(f"  ERROR: {err}", file=sys.stderr)
-    if args.verbose and result.details:
-        for detail in result.details:
-            print(f"  {detail}")
+    try:
+        with SyncLockManager(sync_lock_path()):
+            store = _get_store()
+            git_mgr = GitRepoManager(repos_cache_path())
+            log_writer = SyncLogWriter(sync_log_path())
 
-    return 1 if result.errors else 0
+            engine = SyncEngine(store, git_mgr, state_mgr, log_writer)
+            result = engine.sync_all(config.projects)
+
+            print(
+                f"Sync complete: {result.created} created, {result.updated} updated, "
+                f"{result.deleted} deleted, {result.promoted} promoted"
+            )
+            if result.errors:
+                for err in result.errors:
+                    print(f"  ERROR: {err}", file=sys.stderr)
+            if getattr(args, "verbose", False) and result.details:
+                for detail in result.details:
+                    print(f"  {detail}")
+
+            return 1 if result.errors else 0
+    except RuntimeError:
+        print("Sync already in progress (lock held).", file=sys.stderr)
+        return 1
 
 
 def _cmd_search(args: argparse.Namespace) -> int:
@@ -501,6 +544,41 @@ def _cmd_hook(args: argparse.Namespace) -> int:
         return 1
 
 
+def _maybe_trigger_auto_sync() -> None:
+    import subprocess
+
+    from lore.config.manager import get_global_config
+    from lore.config.utils import sync_lock_path, sync_state_path
+    from lore.sync.lock import SyncLockManager
+    from lore.sync.state import SyncStateManager, is_stale
+
+    try:
+        config = get_global_config()
+        if not config.sync.auto_sync or not config.sync.on_session_start:
+            return
+
+        lock_mgr = SyncLockManager(sync_lock_path())
+        if lock_mgr.is_locked:
+            return
+
+        state_mgr = SyncStateManager(sync_state_path())
+        last_sync = state_mgr.last_sync_time()
+
+        if not is_stale(last_sync, config.sync.staleness_threshold_minutes):
+            return
+
+        subprocess.Popen(
+            ["lore", "sync"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception:
+        import logging
+
+        logging.getLogger("lore").debug("auto-sync trigger failed", exc_info=True)
+
+
 def _cmd_hook_recall(args: argparse.Namespace) -> int:
     payload = sys.stdin.read()
     if not payload.strip():
@@ -517,6 +595,8 @@ def _cmd_hook_recall(args: argparse.Namespace) -> int:
 
     if not _is_lore_project():
         return 0
+
+    _maybe_trigger_auto_sync()
 
     try:
         from lore.config.manager import get_project_config
@@ -562,6 +642,12 @@ def main(argv: list[str] | None = None) -> None:
     sync_parser = sub.add_parser("sync", help="Sync knowledge repos")
     sync_parser.add_argument(
         "--verbose", "-v", action="store_true", help="Show per-file details"
+    )
+    sync_parser.add_argument(
+        "--status", action="store_true", help="Show sync status and staleness"
+    )
+    sync_parser.add_argument(
+        "--force", action="store_true", help="Force sync regardless of staleness"
     )
 
     search_parser = sub.add_parser("search", help="Search knowledge base")

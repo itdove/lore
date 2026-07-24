@@ -37,13 +37,20 @@ class GitConfig:
 
 
 @dataclass
+class SyncConfig:
+    auto_sync: bool = True
+    staleness_threshold_minutes: int = 60
+    on_session_start: bool = True
+
+
+@dataclass
 class GlobalConfig:
     projects: list[str] = field(default_factory=list)
     store: StoreConfig = field(default_factory=StoreConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
     git: GitConfig = field(default_factory=GitConfig)
-    sync_interval: str = "30m"
+    sync: SyncConfig = field(default_factory=SyncConfig)
 
 
 @dataclass

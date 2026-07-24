@@ -34,3 +34,19 @@ def config_path() -> Path:
 
 def db_path() -> Path:
     return data_dir() / "knowledge.db"
+
+
+def sync_state_path() -> Path:
+    return state_dir() / "sync-state.json"
+
+
+def sync_lock_path() -> Path:
+    return state_dir() / "sync.lock"
+
+
+def sync_log_path() -> Path:
+    return state_dir() / "sync.md"
+
+
+def repos_cache_path() -> Path:
+    return cache_dir() / "repos"

@@ -259,7 +259,9 @@ Why: compliance requirement from security audit Q2 2026.
   - Individual entries → stored to local SQLite immediately
   - Shared entries → cheap LLM determines appropriate level → auto-PR created
   - Cheap LLM detects stale entries → negate with reason
-- `lore setup --ide claude` registers hooks in settings
+- `lore init` registers hooks in project-level `.claude/settings.json` (not global)
+- `lore init` registers MCP server in project-level `.mcp.json` (not global `~/.claude.json`)
+- Only projects with `lore init` get hooks and MCP — clean per-project opt-in
 
 *PR-based review:*
 - Session-end capture creates PRs in appropriate knowledge repo
@@ -289,11 +291,20 @@ Why: compliance requirement from security audit Q2 2026.
 - `list_conflicts()` — all entries with `conflict_with IS NOT NULL`
 
 *CLI:*
-- `lore init` — creates config, schema, registers MCP, detects git remote
+- `lore init` — creates config, schema, registers MCP (`.mcp.json`), registers hooks (`.claude/settings.json`), detects git remote
 - `lore sync` — pull all repos, reindex SQLite, detect conflicts, clean promoted entries
+- `lore sync --status` — show last sync time and staleness
 - `lore search <topic>` — FTS query from command line
 - `lore conflicts` — show conflict report
+- `lore config show|set|edit` — view and edit configuration (#29)
 - `lore ui` — launch NiceGUI dashboard
+
+*Auto-sync (#40):*
+- Recall hook checks staleness, spawns background sync (fire-and-forget) if stale
+- Always queries cached DB immediately — never blocks on sync
+- Background sync updates DB for next invocation
+- Configurable staleness threshold (default: 60 minutes)
+- Lock file prevents concurrent syncs
 
 *NiceGUI dashboard:*
 - Local web UI on `localhost:8765`
@@ -304,7 +315,11 @@ Why: compliance requirement from security audit Q2 2026.
 - Sync status: last sync per repo, entries added/removed/updated
 - Stats: entry count per scope, staleness, coverage
 
-**Deliverable:** developer installs `pip install lore-mcp`, runs `lore init`, configures repos, runs `lore sync`. Claude Code sessions recall shared knowledge, capture discoveries, create PRs for team review. Individual knowledge persists locally across sessions. Conflicts tracked and reportable. All at near-zero cost (local LLM).
+*Infrastructure:*
+- CI/CD: GitHub Actions for tests, black/ruff linting, wheel build (#22)
+- Local file path support in git sync (#30)
+
+**Deliverable:** developer installs `pip install lorehive`, runs `lore init`, configures repos, runs `lore sync`. Claude Code sessions recall shared knowledge, capture discoveries, create PRs for team review. Individual knowledge persists locally across sessions. Conflicts tracked and reportable. All at near-zero cost (local LLM).
 
 ---
 
@@ -337,7 +352,7 @@ Why: compliance requirement from security audit Q2 2026.
 - Hook adapter architecture (mirrors ai-guardian's `hook_adapters/`)
 - Adapters: Cursor, GitHub Copilot, OpenAI Codex, Windsurf, Gemini CLI, Cline/ZooCode, Kiro, Augment Code, OpenCode, AiderDesk, OpenClaw, Junie (MCP only)
 - Hook event name normalization across agents
-- `lore setup --ide <agent>` for all supported agents
+- `lore init --ide <agent>` registers hooks in project-level config for each agent
 - Config file locations per agent (matches ai-guardian locations)
 
 **Deliverable:** any supported agent gets the same recall/capture/correction lifecycle. Not just Claude Code.
@@ -366,7 +381,17 @@ Why: compliance requirement from security audit Q2 2026.
 - `lore ingest --source <name>` CLI for manual imports
 - Provenance tracking: `ingested_from` + source-specific metadata
 
-**Deliverable:** session-end hook auto-captures from local tools. Scheduled ingestion from remote sources. One knowledge aggregator.
+*LLM-powered document ingestion (#36, #37):*
+- `DocIngester` — processes single documents (md, rst, txt, adoc) via LLM extraction
+  - Chunks by headings/sections, LLM generates keys, tags, summaries per chunk
+  - `lore ingest --file <path>` CLI
+- `DocRepoIngester` — processes entire documentation repos
+  - `doc_paths` config: list of relative paths to scan (e.g., `["docs/guides", "docs/reference"]`)
+  - `exclude_paths` config: paths to skip
+  - `ingester: "doc-repo"` in hierarchy config triggers LLM-powered ingestion instead of frontmatter parser
+  - Incremental sync via content hash, dedup via cosine distance
+
+**Deliverable:** session-end hook auto-captures from local tools. Scheduled ingestion from remote sources. LLM-powered ingestion of unstructured documentation repos. One knowledge aggregator.
 
 ---
 
@@ -418,6 +443,24 @@ Why: compliance requirement from security audit Q2 2026.
 
 ---
 
+## Post-MVP Enhancements
+
+Features that layer on top of the MVP but aren't tied to a specific enterprise phase.
+
+**PyPI + MCP Directory Publication (#34):**
+- Publish as `lorehive` on PyPI (`pip install lorehive`, CLI stays `lore`)
+- Submit to MCP directories: mcp.so, awesome-mcp-servers, Smithery, Glama
+- GitHub Actions automated release on tag push
+
+**NotebookLM Integration (#38):**
+- One NotebookLM notebook per hierarchy level
+- `lore sync` pushes entries to corresponding notebooks
+- `query_knowledge(use_notebooklm=True)` queries notebooks with semantic search
+- Bonus: audio overviews, mind maps, study guides per level
+- Optional enrichment layer — disabled by default, data hosted by Google
+
+---
+
 ## Phase Summary
 
 | Phase | Value | Storage | Auth | Agents |
@@ -429,6 +472,7 @@ Why: compliance requirement from security audit Q2 2026.
 | **5 — Centralized DB** | Optional Turso/Supabase/AlloyDB | + remote DB | Same | Same |
 | **6 — Auth + ACL** | OIDC, RLS, HTTP transport | Same | + OIDC/RLS | Same |
 | **7 — Hosted dashboard** | Team-wide NiceGUI + SSO + webhooks | Same | + SSO | Same |
+| **Post-MVP** | PyPI publication, NotebookLM integration | Same | Same | Same |
 
 ---
 
@@ -553,43 +597,54 @@ class HookAdapter(ABC):
 ```
 src/lore/
 ├── __init__.py
-├── __main__.py                    # minimal entry wrapper (ai-guardian pattern)
 ├── cli.py                         # argparse subcommands (ai-guardian pattern)
+├── capture.py                     # Session transcript → knowledge extraction (new)
 ├── config/
+│   ├── __init__.py                # Re-exports public API
 │   ├── loaders.py                 # XDG + mtime cache (adapted from ai-guardian)
 │   ├── manager.py                 # resolution chain (adapted)
+│   ├── models.py                  # Dataclasses (GlobalConfig, ProjectConfig, etc.)
 │   └── utils.py                   # path helpers (adapted)
+├── llm/
+│   ├── __init__.py                # Provider factory
+│   ├── base.py                    # LLMProvider ABC (new)
+│   ├── none.py                    # No-op provider (FTS-only mode)
+│   └── ollama.py                  # Ollama synthesis + capture (new)
 ├── mcp/
+│   ├── __init__.py
 │   ├── server.py                  # FastMCP + @server.tool() (adapted)
 │   └── skills/
 │       └── LORE.md                # instructions= content
 ├── store/
-│   ├── base.py                    # StoreBackend ABC (new)
+│   ├── __init__.py                # Store factory
+│   ├── base.py                    # KnowledgeEntry dataclass + StoreBackend ABC (new)
+│   ├── priority.py                # Priority resolution logic
 │   └── sqlite.py                  # SQLite + FTS5 + conflict tracking (new)
-├── git/
-│   ├── base.py                    # GitInterface ABC (new)
-│   └── github.py                  # GitHub PR creation via gh CLI (new)
-├── llm/
-│   ├── base.py                    # LLMProvider ABC (new)
-│   └── ollama.py                  # Ollama synthesis + capture (new)
-├── hook_adapters/
+├── sync/
+│   ├── __init__.py
+│   ├── engine.py                  # Git repo → SQLite sync engine (new)
+│   ├── git.py                     # GitRepoManager — clone/pull (new)
+│   ├── log.py                     # Sync result logging
+│   ├── parser.py                  # Markdown frontmatter parser
+│   └── state.py                   # Sync state persistence
+├── git/                           # (planned — #11)
+│   ├── base.py                    # GitInterface ABC
+│   └── github.py                  # GitHub PR creation via gh CLI
+├── hook_adapters/                 # (planned — #9/#15)
 │   ├── base.py                    # HookAdapter ABC (from ai-guardian)
-│   ├── claude.py                  # Claude Code adapter (adapted)
+│   ├── claude.py                  # Claude Code adapter
 │   └── ...                        # Other agents (Phase 3)
-├── sync.py                        # Git repo → SQLite sync engine (new)
-├── capture.py                     # Session transcript → knowledge extraction (new)
-├── ingesters/
-│   ├── base.py                    # LoreIngester ABC (new, Phase 4)
-│   └── ...
-├── web/
+├── ingesters/                     # (planned — #16/#36/#37)
+│   ├── base.py                    # LoreIngester ABC
+│   ├── doc_ingester.py            # Single document LLM ingestion
+│   └── doc_repo_ingester.py       # Documentation repo ingestion
+├── web/                           # (planned — #13)
 │   ├── app.py                     # NiceGUI wrapper (adapted from ai-guardian)
 │   └── pages/
 │       ├── browser.py             # Knowledge browser
 │       ├── individual.py          # Individual CRUD
 │       ├── conflicts.py           # Conflict viewer
 │       └── sync_status.py         # Sync status
-├── setup/
-│   └── hooks.py                   # IDE hook registration (adapted from ai-guardian)
 tests/
 ├── conftest.py                    # Isolation fixtures (adapted from ai-guardian)
 ├── unit/
@@ -600,9 +655,66 @@ tests/
 
 ## Sprint Breakdown (MVP)
 
-| Sprint | Calendar | Days | Deliverable |
-|--------|----------|------|-------------|
-| **1 — Skeleton** | Week 1 | ~3d | Read path: MCP server + SQLite + config + git sync + query |
-| **2 — Capture** | Week 2-3 | ~7d | Write path: hooks + LLM capture + PR creation + promotion |
-| **3 — Dashboard** | Week 3-4 | ~5d | NiceGUI UI + conflict viewer + polish + packaging |
-| **Total** | **~3 weeks** | **~15 days** | With AI assistance (ai-guardian patterns accelerate) |
+### Sprint 1 — Read Path ✅ COMPLETE
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #2 | Config loading with XDG paths + project override | ✅ |
+| #3 | SQLite schema + FTS5 (knowledge + knowledge_history) | ✅ |
+| #4 | FastMCP server with instructions= from LORE.md | ✅ |
+| #5 | query_knowledge + list_knowledge MCP tools | ✅ |
+| #6 | Git repo sync: pull, parse markdown frontmatter, index to SQLite | ✅ |
+| #7 | lore init + lore sync + lore search CLI | ✅ |
+| #22 | CI/CD workflows for unit tests and black/ruff linting | ✅ |
+| #29 | lore config CLI subcommands (show, set, edit) | ✅ |
+| #30 | Fix: local file paths treated as URLs in git sync | ✅ |
+
+### Sprint 2 — Write Path + Hooks
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #8 | store_knowledge + negate_knowledge + delete_knowledge MCP tools | ✅ |
+| #9 | Claude Code hooks (recall / nudge / capture) | ✅ |
+| #10 | LLM provider ABC + Ollama implementation (synthesis + capture) | ✅ |
+| #11 | GitInterface ABC + GitHub PR creation | ⬜ |
+| #12 | Conflict detection + tracking at sync time | ✅ |
+| #40 | Auto-sync: scheduled and hook-triggered knowledge sync | ⬜ |
+
+### Sprint 3 — Dashboard
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #13 | NiceGUI dashboard (browser, individual CRUD, conflicts, sync status) | ⬜ |
+
+---
+
+## Full Issue Index
+
+| Issue | Phase | Title | Status |
+|-------|-------|-------|--------|
+| #2 | MVP Sprint 1 | Config loading with XDG paths + project override | ✅ |
+| #3 | MVP Sprint 1 | SQLite schema + FTS5 | ✅ |
+| #4 | MVP Sprint 1 | FastMCP server with instructions= from LORE.md | ✅ |
+| #5 | MVP Sprint 1 | query_knowledge + list_knowledge MCP tools | ✅ |
+| #6 | MVP Sprint 1 | Git repo sync: pull, parse, index | ✅ |
+| #7 | MVP Sprint 1 | lore init + lore sync + lore search CLI | ✅ |
+| #22 | MVP Sprint 1 | CI/CD workflows | ✅ |
+| #29 | MVP Sprint 1 | lore config CLI subcommands | ✅ |
+| #30 | MVP Sprint 1 | Fix: local file paths in git sync | ✅ |
+| #8 | MVP Sprint 2 | store/negate/delete_knowledge MCP tools | ✅ |
+| #9 | MVP Sprint 2 | Claude Code hooks (recall/nudge/capture) | ✅ |
+| #10 | MVP Sprint 2 | LLM provider ABC + Ollama | ✅ |
+| #11 | MVP Sprint 2 | GitInterface ABC + GitHub PR creation | ⬜ |
+| #12 | MVP Sprint 2 | Conflict detection + tracking at sync time | ✅ |
+| #40 | MVP Sprint 2 | Auto-sync: hook-triggered background sync | ⬜ |
+| #13 | MVP Sprint 3 | NiceGUI dashboard | ⬜ |
+| #14 | Phase 2 | Hybrid search: EmbeddingProvider + sqlite-vec + RRF | ⬜ |
+| #15 | Phase 3 | Multi-agent hook adapters (13 agents) | ⬜ |
+| #16 | Phase 4 | Ingester framework: LoreIngester ABC + adapters | ⬜ |
+| #36 | Phase 4 | DocIngester: LLM-powered single document ingestion | ⬜ |
+| #37 | Phase 4 | DocRepoIngester: LLM-powered doc repo ingestion | ⬜ |
+| #17 | Phase 5 | Enterprise: StoreBackend ABC + Turso/Supabase | ⬜ |
+| #18 | Phase 6 | Enterprise: OIDC auth + HTTP transport + RLS | ⬜ |
+| #19 | Phase 7 | Enterprise: hosted NiceGUI dashboard + SSO + webhooks | ⬜ |
+| #34 | Post-MVP | Publish lorehive to PyPI and MCP directories | ⬜ |
+| #38 | Post-MVP | NotebookLM integration: one notebook per level | ⬜ |
