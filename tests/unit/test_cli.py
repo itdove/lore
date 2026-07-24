@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 from pathlib import Path
@@ -35,7 +36,7 @@ def test_init_creates_dirs_and_configs(tmp_path):
     project_dir.mkdir()
 
     with mock.patch("lore.cli.input", side_effect=["0"]):
-        with mock.patch("lore.cli._register_mcp"):
+        with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
             with mock.patch.object(Path, "cwd", return_value=project_dir):
                 import argparse
 
@@ -55,13 +56,16 @@ def test_init_creates_dirs_and_configs(tmp_path):
     project_cfg = json.loads(project_cfg_file.read_text())
     assert project_cfg["lore"]["hierarchy"] == []
 
+    assert (project_dir / ".mcp.json").exists()
+    assert (project_dir / ".claude" / "settings.json").exists()
+
 
 def test_init_idempotent(tmp_path):
     project_dir = tmp_path / "myproject"
     project_dir.mkdir()
 
     with mock.patch("lore.cli.input", side_effect=["0"]):
-        with mock.patch("lore.cli._register_mcp"):
+        with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
             with mock.patch.object(Path, "cwd", return_value=project_dir):
                 import argparse
 
@@ -70,7 +74,7 @@ def test_init_idempotent(tmp_path):
                 _cmd_init(argparse.Namespace())
 
     with mock.patch("lore.cli.input", side_effect=["0"]):
-        with mock.patch("lore.cli._register_mcp"):
+        with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
             with mock.patch.object(Path, "cwd", return_value=project_dir):
                 rc = _cmd_init(argparse.Namespace())
 
@@ -85,7 +89,7 @@ def test_init_with_hierarchy(tmp_path):
 
     inputs = ["1", "https://github.com/org/knowledge.git", "main", "team"]
     with mock.patch("lore.cli.input", side_effect=inputs):
-        with mock.patch("lore.cli._register_mcp"):
+        with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
             with mock.patch("lore.cli._cmd_sync", return_value=0):
                 with mock.patch.object(Path, "cwd", return_value=project_dir):
                     import argparse
@@ -133,7 +137,7 @@ def test_init_reuse_hierarchy(tmp_path):
     project_b.mkdir()
 
     with mock.patch("lore.cli.input", return_value="1"):
-        with mock.patch("lore.cli._register_mcp"):
+        with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
             with mock.patch("lore.cli._cmd_sync", return_value=0):
                 with mock.patch.object(Path, "cwd", return_value=project_b):
                     import argparse
@@ -156,7 +160,7 @@ def test_init_registers_project(tmp_path):
     project_dir.mkdir()
 
     with mock.patch("lore.cli.input", side_effect=["0"]):
-        with mock.patch("lore.cli._register_mcp"):
+        with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
             with mock.patch.object(Path, "cwd", return_value=project_dir):
                 import argparse
 
@@ -169,22 +173,27 @@ def test_init_registers_project(tmp_path):
 
 
 def test_init_registers_mcp(tmp_path):
-    claude_json = tmp_path / ".claude.json"
+    project_dir = tmp_path / "myproject"
+    project_dir.mkdir()
 
-    with mock.patch("lore.cli.Path.home", return_value=tmp_path):
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
         with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
             from lore.cli import _register_mcp
 
             _register_mcp()
 
-    data = json.loads(claude_json.read_text())
+    mcp_json = project_dir / ".mcp.json"
+    assert mcp_json.exists()
+    data = json.loads(mcp_json.read_text())
     assert data["mcpServers"]["lore"]["command"] == "/usr/local/bin/lore"
     assert data["mcpServers"]["lore"]["args"] == ["mcp-server"]
 
 
 def test_init_mcp_idempotent(tmp_path):
-    claude_json = tmp_path / ".claude.json"
-    claude_json.write_text(
+    project_dir = tmp_path / "myproject"
+    project_dir.mkdir()
+    mcp_json = project_dir / ".mcp.json"
+    mcp_json.write_text(
         json.dumps(
             {
                 "mcpServers": {
@@ -195,13 +204,32 @@ def test_init_mcp_idempotent(tmp_path):
         )
     )
 
-    with mock.patch("lore.cli.Path.home", return_value=tmp_path):
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
         from lore.cli import _register_mcp
 
         _register_mcp()
 
-    data = json.loads(claude_json.read_text())
+    data = json.loads(mcp_json.read_text())
     assert data["mcpServers"]["lore"]["command"] == "/old/path"
+    assert "other" in data["mcpServers"]
+
+
+def test_init_mcp_merges_existing(tmp_path):
+    project_dir = tmp_path / "myproject"
+    project_dir.mkdir()
+    mcp_json = project_dir / ".mcp.json"
+    mcp_json.write_text(
+        json.dumps({"mcpServers": {"other": {"command": "other", "args": []}}})
+    )
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
+            from lore.cli import _register_mcp
+
+            _register_mcp()
+
+    data = json.loads(mcp_json.read_text())
+    assert "lore" in data["mcpServers"]
     assert "other" in data["mcpServers"]
 
 
@@ -628,3 +656,195 @@ def test_main_config_show_exits_zero(tmp_path, capsys):
         main(["config", "show", "--global"])
 
     assert exc_info.value.code == 0
+
+
+# =====================================================================
+# lore hook registration
+# =====================================================================
+
+
+def test_init_registers_hooks(tmp_path):
+    project_dir = tmp_path / "myproject"
+    project_dir.mkdir()
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        from lore.cli import _register_hooks
+
+        _register_hooks()
+
+    settings = project_dir / ".claude" / "settings.json"
+    assert settings.exists()
+    data = json.loads(settings.read_text())
+    hooks = data["hooks"]
+    assert any(h["command"] == "lore hook recall" for h in hooks["UserPromptSubmit"])
+    assert any(h["command"] == "lore hook nudge" for h in hooks["PostToolUse"])
+    assert any(h["command"] == "lore hook capture" for h in hooks["Stop"])
+
+
+def test_init_hooks_idempotent(tmp_path):
+    project_dir = tmp_path / "myproject"
+    project_dir.mkdir()
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        from lore.cli import _register_hooks
+
+        _register_hooks()
+        _register_hooks()
+
+    settings = project_dir / ".claude" / "settings.json"
+    data = json.loads(settings.read_text())
+    assert len(data["hooks"]["UserPromptSubmit"]) == 1
+    assert len(data["hooks"]["PostToolUse"]) == 1
+    assert len(data["hooks"]["Stop"]) == 1
+
+
+def test_init_hooks_merges_existing(tmp_path):
+    project_dir = tmp_path / "myproject"
+    claude_dir = project_dir / ".claude"
+    claude_dir.mkdir(parents=True)
+    (claude_dir / "settings.json").write_text(
+        json.dumps(
+            {
+                "permissions": {"allow": ["npm test"]},
+                "hooks": {
+                    "UserPromptSubmit": [
+                        {"type": "command", "command": "other-tool hook"}
+                    ]
+                },
+            }
+        )
+    )
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        from lore.cli import _register_hooks
+
+        _register_hooks()
+
+    data = json.loads((claude_dir / "settings.json").read_text())
+    assert data["permissions"]["allow"] == ["npm test"]
+    assert len(data["hooks"]["UserPromptSubmit"]) == 2
+    assert any(
+        h["command"] == "other-tool hook" for h in data["hooks"]["UserPromptSubmit"]
+    )
+
+
+# =====================================================================
+# lore hook commands
+# =====================================================================
+
+
+def test_hook_recall_outputs_context(store, capsys):
+    store.store(
+        _make_entry(
+            key="conv:naming",
+            value="use snake_case for Python",
+            level=1,
+            level_name="team",
+        )
+    )
+
+    payload = json.dumps({"user_message": "snake_case Python"})
+
+    with mock.patch("lore.cli._is_lore_project", return_value=True):
+        with mock.patch("lore.cli._get_store", return_value=store):
+            with mock.patch(
+                "lore.config.manager.get_project_config",
+                return_value=mock.MagicMock(hierarchy=[]),
+            ):
+                with mock.patch("sys.stdin", io.StringIO(payload)):
+                    from lore.cli import _cmd_hook_recall
+
+                    rc = _cmd_hook_recall(argparse.Namespace())
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "conv:naming" in out
+    assert "snake_case" in out
+    assert "<lore-context>" in out
+
+
+def test_hook_recall_empty_stdin(capsys):
+    with mock.patch("sys.stdin", io.StringIO("")):
+        from lore.cli import _cmd_hook_recall
+
+        rc = _cmd_hook_recall(argparse.Namespace())
+
+    assert rc == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_hook_recall_no_results(store, capsys):
+    payload = json.dumps({"user_message": "nonexistent topic"})
+
+    with mock.patch("lore.cli._is_lore_project", return_value=True):
+        with mock.patch("lore.cli._get_store", return_value=store):
+            with mock.patch(
+                "lore.config.manager.get_project_config",
+                return_value=mock.MagicMock(hierarchy=[]),
+            ):
+                with mock.patch("sys.stdin", io.StringIO(payload)):
+                    from lore.cli import _cmd_hook_recall
+
+                    rc = _cmd_hook_recall(argparse.Namespace())
+
+    assert rc == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_hook_nudge_exits_zero():
+    from lore.cli import _cmd_hook_nudge
+
+    assert _cmd_hook_nudge(argparse.Namespace()) == 0
+
+
+def test_hook_capture_exits_zero():
+    from lore.cli import _cmd_hook_capture
+
+    assert _cmd_hook_capture(argparse.Namespace()) == 0
+
+
+def test_hook_recall_invalid_json(capsys):
+    with mock.patch("sys.stdin", io.StringIO("not json {{")):
+        from lore.cli import _cmd_hook_recall
+
+        rc = _cmd_hook_recall(argparse.Namespace())
+
+    assert rc == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_hook_no_subcommand(capsys):
+    from lore.cli import _cmd_hook
+
+    rc = _cmd_hook(argparse.Namespace(hook_command=None))
+    assert rc == 1
+    assert "Usage" in capsys.readouterr().err
+
+
+# =====================================================================
+# _parse_value edge cases
+# =====================================================================
+
+
+def test_parse_value_json_array():
+    from lore.cli import _parse_value
+
+    assert _parse_value("[1, 2, 3]") == [1, 2, 3]
+
+
+def test_parse_value_json_object():
+    from lore.cli import _parse_value
+
+    assert _parse_value('{"key": "val"}') == {"key": "val"}
+
+
+def test_parse_value_plain_string():
+    from lore.cli import _parse_value
+
+    assert _parse_value("hello") == "hello"
+
+
+def test_parse_value_empty_string():
+    from lore.cli import _parse_value
+
+    assert _parse_value("") == ""

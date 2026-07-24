@@ -1,21 +1,23 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 
 from lore.config.manager import get_project_config
-from lore.store.base import KnowledgeEntry
-from lore.store.sqlite import SQLiteStore
+from lore.store.base import KnowledgeEntry, StoreBackend
 from lore.sync.git import GitRepoManager, SyncError
 from lore.sync.log import SyncLogWriter, SyncResult
 from lore.sync.parser import ParsedFile, scan_repo
 from lore.sync.state import RepoSyncState, SyncStateManager
 
+logger = logging.getLogger("lore.sync")
+
 
 class SyncEngine:
     def __init__(
         self,
-        store: SQLiteStore,
+        store: StoreBackend,
         git_manager: GitRepoManager,
         state_manager: SyncStateManager,
         log_writer: SyncLogWriter,
@@ -90,10 +92,10 @@ class SyncEngine:
                 file_hashes=new_hashes,
             )
 
-        promoted = self._promotion_cleanup()
+        promoted = self._store.delete_promoted_locals()
         result.promoted = promoted
-        for _ in range(promoted):
-            result.details.append("[P] promotion cleanup")
+        if promoted:
+            result.details.append(f"[P] {promoted} local entries promoted")
 
         self._state.save(sync_states)
         self._log.write(result)
@@ -106,7 +108,8 @@ class SyncEngine:
         for project_path in projects:
             try:
                 cfg = get_project_config(project_path)
-            except Exception:
+            except Exception as exc:
+                logger.warning("Skipping project %s: %s", project_path, exc)
                 continue
             for h in cfg.hierarchy:
                 key = (h.repo, h.branch)
@@ -142,25 +145,3 @@ class SyncEngine:
             ),
             projects=parsed.projects,
         )
-
-    def _promotion_cleanup(self) -> int:
-        rows = self._store._conn.execute(
-            "SELECT * FROM knowledge WHERE level = 0 "
-            "AND key IN (SELECT DISTINCT key FROM knowledge WHERE level > 0)"
-        ).fetchall()
-        count = 0
-        for row in rows:
-            self._store._log_history(
-                row["id"],
-                "synced_out",
-                previous_value=row["value"],
-                actor="sync",
-                reason="promoted to shared level",
-            )
-            self._store._conn.execute(
-                "DELETE FROM knowledge WHERE id = ?", (row["id"],)
-            )
-            count += 1
-        if count:
-            self._store._conn.commit()
-        return count

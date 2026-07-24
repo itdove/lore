@@ -18,11 +18,11 @@ def _ensure_global_config() -> dict:
     from lore.config.utils import config_path
 
     path = config_path()
-    if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
+    data = _load_json_file(path)
+    if data:
+        return data
     default = {"lore": {"projects": []}}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(default, indent=2) + "\n", encoding="utf-8")
+    _write_json_file(path, default)
     return default
 
 
@@ -50,7 +50,11 @@ def _prompt_hierarchy_interactive() -> list[dict]:
         print()
         return []
 
-    count = int(count_str) if count_str else 0
+    try:
+        count = int(count_str) if count_str else 0
+    except ValueError:
+        print("  Invalid number, using 0.")
+        count = 0
     if count <= 0:
         return []
 
@@ -97,7 +101,10 @@ def _prompt_hierarchy(global_cfg: dict) -> list[dict]:
     if not choice_str:
         return []
 
-    choice = int(choice_str)
+    try:
+        choice = int(choice_str)
+    except ValueError:
+        return _prompt_hierarchy_interactive()
     if 1 <= choice <= len(existing):
         _, hierarchy = existing[choice - 1]
         print(f"  Reusing hierarchy from {existing[choice - 1][0]}")
@@ -107,18 +114,12 @@ def _prompt_hierarchy(global_cfg: dict) -> list[dict]:
 
 
 def _write_project_config(hierarchy: list[dict]) -> None:
-    lore_dir = Path.cwd() / ".lore"
-    lore_dir.mkdir(exist_ok=True)
-    config_file = lore_dir / "config.json"
-
-    if config_file.exists():
-        data = json.loads(config_file.read_text(encoding="utf-8"))
-    else:
-        data = {}
-
+    path = _project_config_path()
+    path.parent.mkdir(exist_ok=True)
+    data = _load_json_file(path)
     data.setdefault("lore", {})
     data["lore"]["hierarchy"] = hierarchy
-    config_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    _write_json_file(path, data)
 
 
 def _register_project(global_cfg: dict) -> dict:
@@ -128,19 +129,13 @@ def _register_project(global_cfg: dict) -> dict:
     projects = global_cfg.setdefault("lore", {}).setdefault("projects", [])
     if cwd not in projects:
         projects.append(cwd)
-        config_path().write_text(
-            json.dumps(global_cfg, indent=2) + "\n", encoding="utf-8"
-        )
+        _write_json_file(config_path(), global_cfg)
     return global_cfg
 
 
 def _register_mcp() -> None:
-    claude_json = Path.home() / ".claude.json"
-
-    if claude_json.exists():
-        data = json.loads(claude_json.read_text(encoding="utf-8"))
-    else:
-        data = {}
+    mcp_json = Path.cwd() / ".mcp.json"
+    data = _load_json_file(mcp_json)
 
     servers = data.setdefault("mcpServers", {})
     if "lore" in servers:
@@ -152,18 +147,37 @@ def _register_mcp() -> None:
         binary = "lore"
 
     servers["lore"] = {"command": binary, "args": ["mcp-server"]}
-    claude_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    _write_json_file(mcp_json, data)
+
+
+def _register_hooks() -> None:
+    settings_path = Path.cwd() / ".claude" / "settings.json"
+    data = _load_json_file(settings_path)
+    hooks = data.setdefault("hooks", {})
+
+    desired = {
+        "UserPromptSubmit": "lore hook recall",
+        "PostToolUse": "lore hook nudge",
+        "Stop": "lore hook capture",
+    }
+
+    changed = False
+    for event, command in desired.items():
+        existing = hooks.get(event, [])
+        if any(h.get("command") == command for h in existing):
+            continue
+        existing.append({"type": "command", "command": command})
+        hooks[event] = existing
+        changed = True
+
+    if changed:
+        _write_json_file(settings_path, data)
 
 
 def _get_store():
-    from lore.config.manager import get_global_config
-    from lore.config.utils import db_path
-    from lore.store.sqlite import SQLiteStore, create_schema
+    from lore.store import get_store
 
-    cfg = get_global_config()
-    path = cfg.store.path or str(db_path())
-    conn = create_schema(path)
-    return SQLiteStore(conn)
+    return get_store()
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
@@ -191,7 +205,10 @@ def _cmd_init(args: argparse.Namespace) -> int:
     print("  Project registered")
 
     _register_mcp()
-    print("  MCP server registered")
+    print("  MCP server registered (.mcp.json)")
+
+    _register_hooks()
+    print("  Hooks registered (.claude/settings.json)")
 
     if hierarchy:
         print("\nRunning first sync...")
@@ -254,14 +271,7 @@ def _cmd_search(args: argparse.Namespace) -> int:
         print("Not in a lore project. Run 'lore init' first.", file=sys.stderr)
         return 1
 
-    filter_levels = (
-        [h.level for h in project_cfg.hierarchy] if project_cfg.hierarchy else None
-    )
-    filter_repos = (
-        [(h.repo, h.branch) for h in project_cfg.hierarchy]
-        if project_cfg.hierarchy
-        else None
-    )
+    filter_levels, filter_repos = _build_hierarchy_filters(project_cfg.hierarchy)
 
     raw = store.query_fts(
         args.topic, limit=50, filter_levels=filter_levels, filter_repos=filter_repos
@@ -321,6 +331,31 @@ def _project_config_path() -> Path:
 
 def _is_lore_project() -> bool:
     return (Path.cwd() / ".lore").is_dir()
+
+
+def _resolve_config_path(use_global: bool) -> Path | None:
+    from lore.config.utils import config_path
+
+    if use_global:
+        return config_path()
+    if not _is_lore_project():
+        print(
+            "Not in a lore project. Run 'lore init' first, or use --global.",
+            file=sys.stderr,
+        )
+        return None
+    return _project_config_path()
+
+
+def _build_hierarchy_filters(
+    hierarchy: list,
+) -> tuple[list[int] | None, list[tuple[str, str]] | None]:
+    if not hierarchy:
+        return None, None
+    return (
+        [h.level for h in hierarchy],
+        [(h.repo, h.branch) for h in hierarchy],
+    )
 
 
 def _load_json_file(path: Path) -> dict:
@@ -403,20 +438,10 @@ def _cmd_config_show(args: argparse.Namespace) -> int:
 
 def _cmd_config_set(args: argparse.Namespace) -> int:
     from lore.config.loaders import _clear_config_cache
-    from lore.config.utils import config_path
 
-    use_global = getattr(args, "global_", False)
-
-    if use_global:
-        path = config_path()
-    else:
-        if not _is_lore_project():
-            print(
-                "Not in a lore project. Run 'lore init' first, " "or use --global.",
-                file=sys.stderr,
-            )
-            return 1
-        path = _project_config_path()
+    path = _resolve_config_path(getattr(args, "global_", False))
+    if path is None:
+        return 1
 
     data = _load_json_file(path)
     keys = args.key.split(".")
@@ -433,20 +458,10 @@ def _cmd_config_edit(args: argparse.Namespace) -> int:
     import subprocess
 
     from lore.config.loaders import _clear_config_cache
-    from lore.config.utils import config_path
 
-    use_global = getattr(args, "global_", False)
-
-    if use_global:
-        path = config_path()
-    else:
-        if not _is_lore_project():
-            print(
-                "Not in a lore project. Run 'lore init' first, " "or use --global.",
-                file=sys.stderr,
-            )
-            return 1
-        path = _project_config_path()
+    path = _resolve_config_path(getattr(args, "global_", False))
+    if path is None:
+        return 1
 
     if not path.exists():
         _write_json_file(path, {})
@@ -465,6 +480,75 @@ def _cmd_config_edit(args: argparse.Namespace) -> int:
 
     _clear_config_cache()
     print(f"Config saved: {path}")
+    return 0
+
+
+# =====================================================================
+# lore hook
+# =====================================================================
+
+
+def _cmd_hook(args: argparse.Namespace) -> int:
+    sub = getattr(args, "hook_command", None)
+    if sub == "recall":
+        return _cmd_hook_recall(args)
+    elif sub == "nudge":
+        return _cmd_hook_nudge(args)
+    elif sub == "capture":
+        return _cmd_hook_capture(args)
+    else:
+        print("Usage: lore hook {recall|nudge|capture}", file=sys.stderr)
+        return 1
+
+
+def _cmd_hook_recall(args: argparse.Namespace) -> int:
+    payload = sys.stdin.read()
+    if not payload.strip():
+        return 0
+
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return 0
+
+    prompt = data.get("user_message", "")
+    if not prompt:
+        return 0
+
+    if not _is_lore_project():
+        return 0
+
+    try:
+        from lore.config.manager import get_project_config
+        from lore.store.priority import resolve_priority
+
+        store = _get_store()
+        project_cfg = get_project_config()
+        filter_levels, filter_repos = _build_hierarchy_filters(project_cfg.hierarchy)
+
+        raw = store.query_fts(
+            prompt, limit=10, filter_levels=filter_levels, filter_repos=filter_repos
+        )
+        resolved = resolve_priority(raw)
+
+        if resolved:
+            lines = ["<lore-context>"]
+            for entry in resolved:
+                level_label = entry.level_name or f"L{entry.level}"
+                lines.append(f"[{level_label}] {entry.key}: {entry.value}")
+            lines.append("</lore-context>")
+            print("\n".join(lines))
+    except Exception as exc:
+        print(f"lore hook recall error: {exc}", file=sys.stderr)
+
+    return 0
+
+
+def _cmd_hook_nudge(args: argparse.Namespace) -> int:
+    return 0
+
+
+def _cmd_hook_capture(args: argparse.Namespace) -> int:
     return 0
 
 
@@ -508,6 +592,12 @@ def main(argv: list[str] | None = None) -> None:
         "--global", dest="global_", action="store_true", help="Edit global config"
     )
 
+    hook_parser = sub.add_parser("hook", help="Claude Code hook handlers")
+    hook_sub = hook_parser.add_subparsers(dest="hook_command")
+    hook_sub.add_parser("recall", help="Recall context (UserPromptSubmit)")
+    hook_sub.add_parser("nudge", help="Mid-session nudge (PostToolUse)")
+    hook_sub.add_parser("capture", help="Capture knowledge (Stop)")
+
     args = parser.parse_args(argv)
 
     handlers = {
@@ -517,6 +607,7 @@ def main(argv: list[str] | None = None) -> None:
         "search": _cmd_search,
         "conflicts": _cmd_conflicts,
         "config": _cmd_config,
+        "hook": _cmd_hook,
     }
 
     handler = handlers.get(args.command)

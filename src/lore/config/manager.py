@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 from lore.config.loaders import load_global_config, load_project_config
@@ -18,6 +19,14 @@ def _parse_sub_config(cls, data: dict | None):
     if not data:
         return cls()
     valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
+    unknown = {
+        k for k in data if k not in valid_fields and not k.startswith("_comment")
+    }
+    if unknown:
+        warnings.warn(
+            f"Unknown config fields in {cls.__name__} ignored: {unknown}",
+            stacklevel=2,
+        )
     return cls(**{k: v for k, v in data.items() if k in valid_fields})
 
 

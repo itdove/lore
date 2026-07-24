@@ -72,3 +72,30 @@ class StoreBackend(ABC):
 
     @abstractmethod
     def health(self) -> dict: ...
+
+    @abstractmethod
+    def get_by_id(self, entry_id: str) -> KnowledgeEntry | None: ...
+
+    @abstractmethod
+    def get_by_source(
+        self, key: str, repo_url: str, repo_branch: str
+    ) -> KnowledgeEntry | None: ...
+
+    @abstractmethod
+    def sync_upsert(self, entry: KnowledgeEntry) -> tuple[str, str]: ...
+
+    @abstractmethod
+    def list_by_repo(self, repo_url: str, repo_branch: str) -> list[KnowledgeEntry]: ...
+
+    @abstractmethod
+    def delete_by_source(
+        self,
+        key: str,
+        repo_url: str,
+        repo_branch: str,
+        reason: str,
+        actor: str,
+    ) -> None: ...
+
+    @abstractmethod
+    def delete_promoted_locals(self) -> int: ...
