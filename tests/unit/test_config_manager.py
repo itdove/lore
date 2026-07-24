@@ -17,7 +17,9 @@ def test_get_global_config_defaults(tmp_path):
         assert gc.llm.model is None
         assert gc.search.embedding_provider == "none"
         assert gc.git.provider == "github"
-        assert gc.sync_interval == "30m"
+        assert gc.sync.auto_sync is True
+        assert gc.sync.staleness_threshold_minutes == 60
+        assert gc.sync.on_session_start is True
 
 
 def test_get_global_config_minimal_lore_key(tmp_path):
@@ -28,7 +30,7 @@ def test_get_global_config_minimal_lore_key(tmp_path):
         gc = get_global_config()
         assert gc.projects == []
         assert gc.store.type == "sqlite"
-        assert gc.sync_interval == "30m"
+        assert gc.sync.staleness_threshold_minutes == 60
 
 
 def test_get_global_config_partial_overrides(tmp_path):
@@ -51,7 +53,7 @@ def test_get_global_config_partial_overrides(tmp_path):
         assert gc.llm.provider == "ollama"
         assert gc.llm.model == "phi4-mini"
         assert gc.llm.base_url is None
-        assert gc.sync_interval == "5m"
+        assert gc.sync.staleness_threshold_minutes == 5
         assert gc.store.type == "sqlite"
 
 
@@ -87,7 +89,7 @@ def test_get_global_config_full(tmp_path):
         assert gc.llm.base_url == "http://localhost:11434"
         assert gc.search.embedding_provider == "ollama"
         assert gc.git.provider == "gitlab"
-        assert gc.sync_interval == "1h"
+        assert gc.sync.staleness_threshold_minutes == 60
 
 
 def test_get_project_config_missing(tmp_path):
@@ -188,6 +190,66 @@ def test_get_project_config_skips_invalid_entries(tmp_path):
     assert len(pc.hierarchy) == 2
     assert pc.hierarchy[0].level == 1
     assert pc.hierarchy[1].level == 3
+
+
+def test_get_global_config_sync_object(tmp_path):
+    with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(tmp_path)}):
+        _clear_config_cache()
+        cfg = tmp_path / "config.json"
+        cfg.write_text(
+            json.dumps(
+                {
+                    "lore": {
+                        "sync": {
+                            "auto_sync": False,
+                            "staleness_threshold_minutes": 15,
+                            "on_session_start": False,
+                        }
+                    }
+                }
+            )
+        )
+        gc = get_global_config()
+        assert gc.sync.auto_sync is False
+        assert gc.sync.staleness_threshold_minutes == 15
+        assert gc.sync.on_session_start is False
+
+
+def test_migrate_sync_interval_minutes(tmp_path):
+    with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(tmp_path)}):
+        _clear_config_cache()
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps({"lore": {"sync_interval": "45m"}}))
+        gc = get_global_config()
+        assert gc.sync.staleness_threshold_minutes == 45
+        assert gc.sync.auto_sync is True
+
+
+def test_migrate_sync_interval_hours(tmp_path):
+    with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(tmp_path)}):
+        _clear_config_cache()
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps({"lore": {"sync_interval": "2h"}}))
+        gc = get_global_config()
+        assert gc.sync.staleness_threshold_minutes == 120
+
+
+def test_sync_object_takes_precedence_over_interval(tmp_path):
+    with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(tmp_path)}):
+        _clear_config_cache()
+        cfg = tmp_path / "config.json"
+        cfg.write_text(
+            json.dumps(
+                {
+                    "lore": {
+                        "sync_interval": "5m",
+                        "sync": {"staleness_threshold_minutes": 99},
+                    }
+                }
+            )
+        )
+        gc = get_global_config()
+        assert gc.sync.staleness_threshold_minutes == 99
 
 
 def test_projects_array_readable(tmp_path):

@@ -12,6 +12,7 @@ from lore.config.models import (
     ProjectConfig,
     SearchConfig,
     StoreConfig,
+    SyncConfig,
 )
 
 
@@ -30,9 +31,25 @@ def _parse_sub_config(cls, data: dict | None):
     return cls(**{k: v for k, v in data.items() if k in valid_fields})
 
 
+def _migrate_sync_interval(interval_str: str) -> dict:
+    minutes = 60
+    try:
+        if interval_str.endswith("m"):
+            minutes = int(interval_str[:-1])
+        elif interval_str.endswith("h"):
+            minutes = int(interval_str[:-1]) * 60
+    except (ValueError, IndexError):
+        pass
+    return {"staleness_threshold_minutes": minutes}
+
+
 def get_global_config() -> GlobalConfig:
     raw = load_global_config()
     lore = raw.get("lore", {})
+
+    sync_data = lore.get("sync")
+    if sync_data is None and "sync_interval" in lore:
+        sync_data = _migrate_sync_interval(lore["sync_interval"])
 
     return GlobalConfig(
         projects=lore.get("projects", []),
@@ -40,7 +57,7 @@ def get_global_config() -> GlobalConfig:
         llm=_parse_sub_config(LLMConfig, lore.get("llm")),
         search=_parse_sub_config(SearchConfig, lore.get("search")),
         git=_parse_sub_config(GitConfig, lore.get("git")),
-        sync_interval=lore.get("sync_interval", "30m"),
+        sync=_parse_sub_config(SyncConfig, sync_data),
     )
 
 
