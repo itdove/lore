@@ -556,3 +556,179 @@ def test_locked_field_stored_as_bool(store):
     result = store.get("k1")
     assert result.locked is True
     assert type(result.locked) is bool
+
+
+# --- Sync-specific methods ---
+
+
+def test_get_by_source_found(store):
+    store.store(
+        _make_entry(key="k1", repo_url="https://github.com/org/r", repo_branch="main")
+    )
+    result = store.get_by_source("k1", "https://github.com/org/r", "main")
+    assert result is not None
+    assert result.key == "k1"
+
+
+def test_get_by_source_not_found(store):
+    assert store.get_by_source("k1", "https://github.com/org/r", "main") is None
+
+
+def test_get_by_source_ignores_different_repo(store):
+    store.store(
+        _make_entry(key="k1", repo_url="https://github.com/org/r1", repo_branch="main")
+    )
+    assert store.get_by_source("k1", "https://github.com/org/r2", "main") is None
+
+
+def test_sync_upsert_insert(store):
+    entry = _make_entry(
+        key="k1",
+        repo_url="https://github.com/org/r",
+        repo_branch="main",
+    )
+    entry_id, action = store.sync_upsert(entry)
+    assert action == "created"
+    assert len(entry_id) == 32
+    result = store.get("k1")
+    assert result is not None
+    assert result.key == "k1"
+
+
+def test_sync_upsert_update(store):
+    entry = _make_entry(
+        key="k1",
+        value="old",
+        repo_url="https://github.com/org/r",
+        repo_branch="main",
+    )
+    entry_id, _ = store.sync_upsert(entry)
+    updated = _make_entry(
+        key="k1",
+        value="new",
+        repo_url="https://github.com/org/r",
+        repo_branch="main",
+        tags="t1,t2",
+    )
+    updated_id, action = store.sync_upsert(updated)
+    assert action == "updated"
+    assert updated_id == entry_id
+    result = store.get("k1")
+    assert result.value == "new"
+    assert result.tags == "t1,t2"
+
+
+def test_sync_upsert_preserves_id_and_created_at(store):
+    entry = _make_entry(
+        key="k1",
+        repo_url="https://github.com/org/r",
+        repo_branch="main",
+    )
+    entry_id, _ = store.sync_upsert(entry)
+    result1 = store.get("k1")
+    created_at = result1.created_at
+
+    updated = _make_entry(
+        key="k1",
+        value="new",
+        repo_url="https://github.com/org/r",
+        repo_branch="main",
+    )
+    updated_id, _ = store.sync_upsert(updated)
+    result2 = store.get("k1")
+    assert updated_id == entry_id
+    assert result2.created_at == created_at
+
+
+def test_sync_upsert_updates_all_fields(store):
+    entry = _make_entry(
+        key="k1",
+        value="v1",
+        level=1,
+        tags="a",
+        locked=False,
+        provenance='{"sha":"old"}',
+        repo_url="https://github.com/org/r",
+        repo_branch="main",
+        ingested_from="git",
+    )
+    store.sync_upsert(entry)
+    updated = _make_entry(
+        key="k1",
+        value="v2",
+        level=2,
+        level_name="org",
+        tags="b,c",
+        locked=True,
+        provenance='{"sha":"new"}',
+        repo_url="https://github.com/org/r",
+        repo_branch="main",
+        ingested_from="git",
+        projects="p1",
+    )
+    store.sync_upsert(updated)
+    result = store.get("k1")
+    assert result.value == "v2"
+    assert result.level == 2
+    assert result.level_name == "org"
+    assert result.tags == "b,c"
+    assert result.locked is True
+    assert result.provenance == '{"sha":"new"}'
+    assert result.projects == "p1"
+
+
+def test_list_by_repo(store):
+    store.store(
+        _make_entry(key="k1", repo_url="https://github.com/org/r", repo_branch="main")
+    )
+    store.store(
+        _make_entry(key="k2", repo_url="https://github.com/org/r", repo_branch="main")
+    )
+    store.store(
+        _make_entry(
+            key="k3", repo_url="https://github.com/org/other", repo_branch="dev"
+        )
+    )
+    results = store.list_by_repo("https://github.com/org/r", "main")
+    assert len(results) == 2
+    keys = {r.key for r in results}
+    assert keys == {"k1", "k2"}
+
+
+def test_list_by_repo_empty(store):
+    assert store.list_by_repo("https://github.com/org/r", "main") == []
+
+
+def test_delete_by_source(store):
+    store.store(
+        _make_entry(key="k1", repo_url="https://github.com/org/r", repo_branch="main")
+    )
+    store.delete_by_source(
+        "k1", "https://github.com/org/r", "main", "file removed", "sync"
+    )
+    assert store.get("k1") is None
+
+
+def test_delete_by_source_logs_synced_out(store):
+    store.store(
+        _make_entry(
+            key="k1",
+            value="val",
+            repo_url="https://github.com/org/r",
+            repo_branch="main",
+        )
+    )
+    entry = store.get("k1")
+    store.delete_by_source("k1", "https://github.com/org/r", "main", "removed", "sync")
+    rows = store._conn.execute(
+        "SELECT * FROM knowledge_history WHERE knowledge_id = ? "
+        "AND action = 'synced_out'",
+        (entry.id,),
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["previous_value"] == "val"
+
+
+def test_delete_by_source_not_found(store):
+    with pytest.raises(KeyError):
+        store.delete_by_source("missing", "url", "branch", "reason", "actor")

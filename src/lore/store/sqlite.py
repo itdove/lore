@@ -277,6 +277,117 @@ class SQLiteStore(StoreBackend):
             for row in rows
         ]
 
+    def get_by_source(
+        self, key: str, repo_url: str, repo_branch: str
+    ) -> KnowledgeEntry | None:
+        row = self._conn.execute(
+            "SELECT * FROM knowledge "
+            "WHERE key = ? AND repo_url = ? AND repo_branch = ?",
+            (key, repo_url, repo_branch),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_entry(row)
+
+    def sync_upsert(self, entry: KnowledgeEntry) -> tuple[str, str]:
+        existing = self.get_by_source(entry.key, entry.repo_url, entry.repo_branch)
+        now = datetime.now(timezone.utc).isoformat()
+
+        if existing is None:
+            entry_id = entry.id or uuid.uuid4().hex
+            created = entry.created_at or now
+            placeholders = ", ".join("?" for _ in _KNOWLEDGE_COLUMNS)
+            cols = ", ".join(_KNOWLEDGE_COLUMNS)
+            self._conn.execute(
+                f"INSERT INTO knowledge ({cols}) VALUES ({placeholders})",
+                (
+                    entry_id,
+                    entry.key,
+                    entry.value,
+                    entry.tags,
+                    entry.level,
+                    entry.level_name,
+                    entry.locked,
+                    entry.conflict_with,
+                    entry.conflict_status,
+                    entry.repo_url,
+                    entry.repo_branch,
+                    entry.ingested_from,
+                    entry.provenance,
+                    entry.times_seen,
+                    entry.projects,
+                    entry.embedding,
+                    created,
+                    now,
+                ),
+            )
+            self._log_history(entry_id, "created")
+            self._conn.commit()
+            return entry_id, "created"
+
+        entry_id = existing.id
+        self._conn.execute(
+            "UPDATE knowledge SET value = ?, tags = ?, level = ?, "
+            "level_name = ?, locked = ?, ingested_from = ?, provenance = ?, "
+            "times_seen = ?, projects = ?, updated_at = ? "
+            "WHERE key = ? AND repo_url = ? AND repo_branch = ?",
+            (
+                entry.value,
+                entry.tags,
+                entry.level,
+                entry.level_name,
+                entry.locked,
+                entry.ingested_from,
+                entry.provenance,
+                entry.times_seen,
+                entry.projects,
+                now,
+                entry.key,
+                entry.repo_url,
+                entry.repo_branch,
+            ),
+        )
+        self._log_history(entry_id, "updated", previous_value=existing.value)
+        self._conn.commit()
+        return entry_id, "updated"
+
+    def list_by_repo(self, repo_url: str, repo_branch: str) -> list[KnowledgeEntry]:
+        rows = self._conn.execute(
+            "SELECT * FROM knowledge WHERE repo_url = ? AND repo_branch = ?",
+            (repo_url, repo_branch),
+        ).fetchall()
+        return [self._row_to_entry(row) for row in rows]
+
+    def delete_by_source(
+        self,
+        key: str,
+        repo_url: str,
+        repo_branch: str,
+        reason: str,
+        actor: str,
+    ) -> None:
+        row = self._conn.execute(
+            "SELECT id, value FROM knowledge "
+            "WHERE key = ? AND repo_url = ? AND repo_branch = ?",
+            (key, repo_url, repo_branch),
+        ).fetchone()
+        if row is None:
+            raise KeyError(key)
+
+        self._log_history(
+            row["id"],
+            "synced_out",
+            previous_value=row["value"],
+            actor=actor,
+            reason=reason,
+        )
+        self._conn.execute(
+            "DELETE FROM knowledge "
+            "WHERE key = ? AND repo_url = ? AND repo_branch = ?",
+            (key, repo_url, repo_branch),
+        )
+        self._conn.commit()
+
     def list_entries(
         self, tag: str | None = None, level: int | None = None
     ) -> list[KnowledgeEntry]:
