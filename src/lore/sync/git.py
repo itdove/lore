@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import hashlib
-import re
 import subprocess
 from pathlib import Path
+
+from lore.git.base import redact_url_creds
+from lore.git.base import repo_to_url as _repo_to_url
 
 _CLONE_TIMEOUT = 300
 _FETCH_TIMEOUT = 120
 _LOCAL_TIMEOUT = 30
-
-
-def _redact_url_creds(text: str) -> str:
-    return re.sub(r"(https?://)([^@]+)@", r"\1****@", text)
 
 
 class SyncError(Exception):
@@ -24,11 +22,7 @@ class GitRepoManager:
 
     @staticmethod
     def repo_to_url(repo: str) -> str:
-        if repo.startswith(("https://", "http://", "git@", "ssh://")):
-            return repo
-        if repo.startswith(("/", "./", "../", "~")):
-            return repo
-        return f"https://{repo}"
+        return _repo_to_url(repo)
 
     @staticmethod
     def repo_dir_hash(repo: str, branch: str) -> str:
@@ -66,7 +60,7 @@ class GitRepoManager:
             except subprocess.CalledProcessError as exc:
                 raise SyncError(
                     f"Failed to clone {repo}@{branch}: "
-                    f"{_redact_url_creds(exc.stderr.strip())}"
+                    f"{redact_url_creds(exc.stderr.strip())}"
                 ) from exc
         else:
             try:
@@ -96,7 +90,7 @@ class GitRepoManager:
             except subprocess.CalledProcessError as exc:
                 raise SyncError(
                     f"Failed to pull {repo}@{branch}: "
-                    f"{_redact_url_creds(exc.stderr.strip())}"
+                    f"{redact_url_creds(exc.stderr.strip())}"
                 ) from exc
 
         return self.get_head_sha(path)
