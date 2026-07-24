@@ -33,6 +33,20 @@ def test_repo_to_url_http():
     )
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/tmp/demo-knowledge.git",
+        "/absolute/path/to/repo",
+        "./repos/knowledge.git",
+        "../sibling/repo.git",
+        "~/knowledge.git",
+    ],
+)
+def test_repo_to_url_local_path(path):
+    assert GitRepoManager.repo_to_url(path) == path
+
+
 # --- repo_dir_hash ---
 
 
