@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.resources
 import logging
-import re
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -52,16 +51,15 @@ def _entry_to_dict(entry: KnowledgeEntry) -> dict:
     return d
 
 
-_KEY_RE = re.compile(r"^[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+$")
 _SHARED_DELETE_ERR = "shared entry — submit PR to the knowledge repo to delete"
 
 
 def _validate_key(key: str) -> None:
-    if not _KEY_RE.match(key):
-        raise ValueError(
-            f"Invalid key format: '{key}'. "
-            "Expected 'type:domain:slug' with alphanumeric, hyphens, underscores."
-        )
+    from lore.store.base import validate_key
+
+    err = validate_key(key)
+    if err:
+        raise ValueError(f"Invalid key format: '{key}'. {err}")
 
 
 def _create_shared_pr(
