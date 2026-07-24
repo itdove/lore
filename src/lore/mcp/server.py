@@ -7,6 +7,9 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from lore.config.manager import get_global_config, get_project_config
+from lore.embedding import EmbeddingProvider
+from lore.embedding import get_embedding_provider as _create_embedding_provider
+from lore.embedding.base import embed_to_blob
 from lore.git import GitError, get_git_interface, key_to_path
 from lore.llm import LLMProvider
 from lore.llm import get_llm_provider as _create_llm_provider
@@ -27,6 +30,7 @@ def _load_lore_instructions() -> str:
 
 _store_instance: SQLiteStore | None = None
 _llm_instance: LLMProvider | None = None
+_embedding_instance: EmbeddingProvider | None = None
 
 
 def _get_store() -> SQLiteStore:
@@ -43,6 +47,14 @@ def _get_llm_provider() -> LLMProvider:
         return _llm_instance
     _llm_instance = _create_llm_provider()
     return _llm_instance
+
+
+def _get_embedding_provider() -> EmbeddingProvider:
+    global _embedding_instance
+    if _embedding_instance is not None:
+        return _embedding_instance
+    _embedding_instance = _create_embedding_provider()
+    return _embedding_instance
 
 
 def _entry_to_dict(entry: KnowledgeEntry) -> dict:
@@ -108,14 +120,15 @@ def create_server() -> FastMCP:
         topic: str,
         level: str | None = None,
     ) -> dict:
-        """Search knowledge base using full-text search.
+        """Search knowledge base using hybrid search (FTS + vector + RRF).
 
         Args:
-            topic: Search query for FTS5 matching against key, value, and tags.
+            topic: Search query. Matched against key, value, and tags via
+                FTS5, and semantically via vector embeddings when configured.
             level: Optional level number to filter results (e.g. "0", "1", "2").
 
         Returns:
-            FTS-ranked results with priority resolution. When the same key
+            Hybrid-ranked results with priority resolution. When the same key
             exists at multiple levels, the highest priority wins. Locked
             entries always win. Includes LLM synthesis when configured.
         """
@@ -125,7 +138,24 @@ def create_server() -> FastMCP:
         if level is not None:
             filter_levels = [int(level)]
 
-        raw_results = store.query_fts(topic, limit=50, filter_levels=filter_levels)
+        query_embedding = None
+        cfg = get_global_config()
+        if cfg.search.embedding_provider != "none":
+            try:
+                query_embedding = _get_embedding_provider().embed(topic)
+            except Exception:
+                logger.warning(
+                    "Embedding failed for topic %r, falling back to FTS",
+                    topic,
+                    exc_info=True,
+                )
+
+        raw_results = store.query_hybrid(
+            topic,
+            query_embedding=query_embedding,
+            limit=50,
+            filter_levels=filter_levels,
+        )
         resolved = resolve_priority(raw_results)
 
         results = []
@@ -135,7 +165,6 @@ def create_server() -> FastMCP:
             results.append(d)
 
         synthesized = None
-        cfg = get_global_config()
         if cfg.llm.provider != "none" and resolved:
             try:
                 synthesized = _get_llm_provider().synthesize(topic, resolved)
@@ -248,6 +277,37 @@ def create_server() -> FastMCP:
         _validate_key(key)
         level_int, level_name, repo_url, repo_branch = _resolve_level(level)
         store = _get_store()
+        cfg = get_global_config()
+
+        embedding_blob = None
+        if cfg.search.embedding_provider != "none":
+            try:
+                emb_vec = _get_embedding_provider().embed(f"{key} {value}")
+                if emb_vec:
+                    embedding_blob = embed_to_blob(emb_vec)
+                    dupes = store.query_vector(
+                        emb_vec, limit=1, filter_levels=[level_int]
+                    )
+                    if dupes:
+                        closest, dist = dupes[0]
+                        if dist < cfg.search.dedup_threshold:
+                            store.update(
+                                closest.key,
+                                closest.value,
+                                reason=f"reinforced (cosine dist={dist:.4f})",
+                                actor="mcp",
+                                level=closest.level,
+                            )
+                            return {
+                                "id": closest.id,
+                                "key": closest.key,
+                                "level": closest.level,
+                                "deduplicated": True,
+                                "distance": round(dist, 4),
+                                "pr_url": None,
+                            }
+            except Exception:
+                logger.warning("Embedding failed for key %r", key, exc_info=True)
 
         existing = store.get_by_key_and_level(key, level_int)
         if existing:
@@ -269,6 +329,7 @@ def create_server() -> FastMCP:
                 level_name=level_name,
                 repo_url=repo_url,
                 repo_branch=repo_branch,
+                embedding=embedding_blob,
             )
             entry_id = store.store(entry)
 

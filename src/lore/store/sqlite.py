@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
 
+from lore.embedding.base import blob_to_embed, cosine_distance
 from lore.store.base import HistoryRecord, KnowledgeEntry, StoreBackend
+
+log = logging.getLogger("lore.store")
+
+_RRF_K = 60
 
 _NEGATED_RE = re.compile(r"^\[NEGATED\]\s*(.*?)\n\nPrevious value:\s*(.*)", re.DOTALL)
 
@@ -194,6 +200,36 @@ class SQLiteStore(StoreBackend):
         self._conn.commit()
         return entry_id
 
+    @staticmethod
+    def _build_filter(
+        filter_levels: list[int] | None,
+        filter_repos: list[tuple[str, str]] | None,
+        include_negated: bool,
+        col_prefix: str = "",
+    ) -> tuple[list[str], list]:
+        p = f"{col_prefix}." if col_prefix else ""
+        conditions = [
+            f"({p}conflict_with IS NULL OR {p}conflict_status = 'active')",
+        ]
+        if not include_negated:
+            conditions.append(f"{p}negated IS NULL")
+        params: list = []
+
+        if filter_levels is not None:
+            levels = sorted(set(filter_levels) | {0})
+            placeholders = ", ".join("?" for _ in levels)
+            conditions.append(f"{p}level IN ({placeholders})")
+            params.extend(levels)
+
+        if filter_repos is not None:
+            repo_clauses = [f"{p}level = 0"]
+            for repo_url, repo_branch in filter_repos:
+                repo_clauses.append(f"({p}repo_url = ? AND {p}repo_branch = ?)")
+                params.extend([repo_url, repo_branch])
+            conditions.append(f"({' OR '.join(repo_clauses)})")
+
+        return conditions, params
+
     def query_fts(
         self,
         topic: str,
@@ -202,26 +238,11 @@ class SQLiteStore(StoreBackend):
         filter_repos: list[tuple[str, str]] | None = None,
         include_negated: bool = False,
     ) -> list[KnowledgeEntry]:
-        conditions = [
-            "knowledge_fts MATCH ?",
-            "(k.conflict_with IS NULL OR k.conflict_status = 'active')",
-        ]
-        if not include_negated:
-            conditions.append("k.negated IS NULL")
-        params: list = [topic]
-
-        if filter_levels is not None:
-            levels = sorted(set(filter_levels) | {0})
-            placeholders = ", ".join("?" for _ in levels)
-            conditions.append(f"k.level IN ({placeholders})")
-            params.extend(levels)
-
-        if filter_repos is not None:
-            repo_clauses = ["k.level = 0"]
-            for repo_url, repo_branch in filter_repos:
-                repo_clauses.append("(k.repo_url = ? AND k.repo_branch = ?)")
-                params.extend([repo_url, repo_branch])
-            conditions.append(f"({' OR '.join(repo_clauses)})")
+        conditions, params = self._build_filter(
+            filter_levels, filter_repos, include_negated, col_prefix="k"
+        )
+        conditions.insert(0, "knowledge_fts MATCH ?")
+        params.insert(0, topic)
 
         where = " AND ".join(conditions)
         params.append(limit)
@@ -415,7 +436,7 @@ class SQLiteStore(StoreBackend):
         self._conn.execute(
             "UPDATE knowledge SET value = ?, tags = ?, level = ?, "
             "level_name = ?, locked = ?, ingested_from = ?, provenance = ?, "
-            "times_seen = ?, projects = ?, updated_at = ? "
+            "times_seen = ?, projects = ?, embedding = ?, updated_at = ? "
             "WHERE key = ? AND repo_url = ? AND repo_branch = ?",
             (
                 entry.value,
@@ -427,6 +448,7 @@ class SQLiteStore(StoreBackend):
                 entry.provenance,
                 entry.times_seen,
                 entry.projects,
+                entry.embedding,
                 now,
                 entry.key,
                 entry.repo_url,
@@ -582,6 +604,88 @@ class SQLiteStore(StoreBackend):
             self._conn.execute("DELETE FROM knowledge WHERE id = ?", (row["id"],))
             count += 1
         return count
+
+    def query_vector(
+        self,
+        embedding: list[float],
+        limit: int = 10,
+        filter_levels: list[int] | None = None,
+        filter_repos: list[tuple[str, str]] | None = None,
+        include_negated: bool = False,
+    ) -> list[tuple[KnowledgeEntry, float]]:
+        if not embedding:
+            return []
+        conditions, params = self._build_filter(
+            filter_levels, filter_repos, include_negated
+        )
+        conditions.insert(0, "embedding IS NOT NULL")
+
+        where = " AND ".join(conditions)
+        sql = f"SELECT * FROM knowledge WHERE {where}"
+
+        try:
+            rows = self._conn.execute(sql, params).fetchall()
+        except sqlite3.OperationalError as exc:
+            log.warning("Vector search failed: %s", exc)
+            return []
+
+        scored = []
+        for row in rows:
+            entry = self._row_to_entry(row)
+            stored = blob_to_embed(row["embedding"])
+            dist = cosine_distance(embedding, stored)
+            scored.append((entry, dist))
+
+        scored.sort(key=lambda x: x[1])
+        return scored[:limit]
+
+    def query_hybrid(
+        self,
+        topic: str,
+        query_embedding: list[float] | None = None,
+        limit: int = 10,
+        filter_levels: list[int] | None = None,
+        filter_repos: list[tuple[str, str]] | None = None,
+        include_negated: bool = False,
+    ) -> list[KnowledgeEntry]:
+        pool = limit * 3
+        fts_results = self.query_fts(
+            topic,
+            limit=pool,
+            filter_levels=filter_levels,
+            filter_repos=filter_repos,
+            include_negated=include_negated,
+        )
+
+        if not query_embedding:
+            return fts_results[:limit]
+
+        vec_results = self.query_vector(
+            query_embedding,
+            limit=pool,
+            filter_levels=filter_levels,
+            filter_repos=filter_repos,
+            include_negated=include_negated,
+        )
+
+        if not vec_results:
+            return fts_results[:limit]
+
+        scores: dict[str, float] = {}
+        entries: dict[str, KnowledgeEntry] = {}
+
+        for rank, entry in enumerate(fts_results, start=1):
+            eid = entry.id
+            scores[eid] = scores.get(eid, 0) + 1.0 / (_RRF_K + rank)
+            entries[eid] = entry
+
+        for rank, (entry, _distance) in enumerate(vec_results, start=1):
+            eid = entry.id
+            scores[eid] = scores.get(eid, 0) + 1.0 / (_RRF_K + rank)
+            entries[eid] = entry
+
+        ranked = sorted(scores, key=lambda eid: scores[eid], reverse=True)
+        return [entries[eid] for eid in ranked[:limit]]
 
     def health(self) -> dict:
         row = self._conn.execute(

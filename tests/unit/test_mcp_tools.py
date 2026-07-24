@@ -638,3 +638,78 @@ def test_delete_knowledge_history_logged(tools, store):
 
     history = store.get_history(entry_id)
     assert any(h.action == "deleted" for h in history)
+
+
+# =====================================================================
+# Hybrid search + dedup
+# =====================================================================
+
+
+def test_query_knowledge_uses_hybrid_when_embedding_configured(store, monkeypatch):
+    """When embedding provider configured, query_knowledge uses hybrid search."""
+    import lore.mcp.server as srv
+    from lore.config.models import GlobalConfig, SearchConfig
+    from lore.embedding.base import embed_to_blob
+    from lore.embedding.none import NoneProvider as EmbNoneProvider
+
+    cfg = GlobalConfig(search=SearchConfig(embedding_provider="ollama"))
+    monkeypatch.setattr(srv, "_get_store", lambda: store)
+    monkeypatch.setattr(srv, "_get_embedding_provider", lambda: EmbNoneProvider())
+    monkeypatch.setattr(srv, "get_global_config", lambda: cfg)
+
+    server = srv.create_server()
+    tool_map = {}
+    for tool in server._tool_manager._tools.values():
+        tool_map[tool.name] = tool.fn
+
+    emb = [0.5] * 8
+    store.store(
+        _make_entry(
+            key="bug:auth:jwt", value="JWT token expiry", embedding=embed_to_blob(emb)
+        )
+    )
+
+    result = tool_map["query_knowledge"](topic="JWT")
+    assert len(result["results"]) == 1
+    assert result["results"][0]["key"] == "bug:auth:jwt"
+
+
+def test_store_knowledge_with_embedding(store, monkeypatch):
+    """store_knowledge stores embedding when provider configured."""
+    import lore.mcp.server as srv
+    from lore.config.models import GlobalConfig, SearchConfig
+    from lore.embedding.none import NoneProvider as EmbNoneProvider
+
+    cfg = GlobalConfig(search=SearchConfig(embedding_provider="ollama"))
+    monkeypatch.setattr(srv, "_get_store", lambda: store)
+    monkeypatch.setattr(srv, "_get_embedding_provider", lambda: EmbNoneProvider())
+    monkeypatch.setattr(srv, "get_global_config", lambda: cfg)
+
+    server = srv.create_server()
+    tool_map = {}
+    for tool in server._tool_manager._tools.values():
+        tool_map[tool.name] = tool.fn
+
+    result = tool_map["store_knowledge"](key="test:new:entry", value="test value")
+    assert "id" in result
+    entry = store.get("test:new:entry")
+    assert entry is not None
+
+
+def test_query_knowledge_fts_fallback(store, monkeypatch):
+    """query_knowledge falls back to FTS when embedding provider is none."""
+    import lore.mcp.server as srv
+    from lore.embedding.none import NoneProvider as EmbNoneProvider
+
+    monkeypatch.setattr(srv, "_get_store", lambda: store)
+    monkeypatch.setattr(srv, "_get_embedding_provider", lambda: EmbNoneProvider())
+    # Intentionally leave embedding_provider="none" to test FTS fallback
+
+    server = srv.create_server()
+    tool_map = {}
+    for tool in server._tool_manager._tools.values():
+        tool_map[tool.name] = tool.fn
+
+    store.store(_make_entry(key="bug:auth:jwt", value="JWT token expiry"))
+    result = tool_map["query_knowledge"](topic="JWT")
+    assert len(result["results"]) == 1

@@ -161,3 +161,24 @@ class StoreBackend(ABC):
 
     @abstractmethod
     def delete_promoted_locals(self) -> int: ...
+
+    @abstractmethod
+    def query_vector(
+        self,
+        embedding: list[float],
+        limit: int = 10,
+        filter_levels: list[int] | None = None,
+        filter_repos: list[tuple[str, str]] | None = None,
+        include_negated: bool = False,
+    ) -> list[tuple[KnowledgeEntry, float]]: ...
+
+    @abstractmethod
+    def query_hybrid(
+        self,
+        topic: str,
+        query_embedding: list[float] | None = None,
+        limit: int = 10,
+        filter_levels: list[int] | None = None,
+        filter_repos: list[tuple[str, str]] | None = None,
+        include_negated: bool = False,
+    ) -> list[KnowledgeEntry]: ...
