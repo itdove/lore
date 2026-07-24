@@ -133,21 +133,14 @@ See issue #2 and `DEVELOPMENT_PLAN.md` for full config specification.
 
 ### Linting
 
-The project uses black and ruff enforced by CI. **Run these after finishing all implementations:**
+The project uses black and ruff enforced by CI. **MANDATORY: Run both linters after every code change, not just at the end.**
 
 ```bash
-# 1. Auto-fix formatting with black
-black src/lore/ tests/
+# Full lint cycle (run after every implementation step):
+black src/lore/ tests/ && ruff check src/lore/ tests/ --fix && black src/lore/ tests/
 
-# 2. Auto-fix safe lint issues with ruff
-ruff check src/lore/ tests/ --fix
-
-# 3. Re-run black (ruff fixes may need reformatting)
-black src/lore/ tests/
-
-# 4. Verify all checks pass
-ruff check src/lore/ tests/
-black --check src/lore/ tests/
+# Verify all checks pass:
+ruff check src/lore/ tests/ && black --check src/lore/ tests/
 ```
 
 Ruff configuration is in `pyproject.toml` under `[tool.ruff]`.
@@ -155,10 +148,8 @@ Ruff configuration is in `pyproject.toml` under `[tool.ruff]`.
 ### Pre-commit Checks
 
 Before committing, ensure:
-1. All tests pass: `pytest tests/ -v`
-2. Code is formatted: `black --check src/lore/ tests/`
-3. No lint errors: `ruff check src/lore/ tests/`
-4. Run linters: `black`, `ruff check` (required — CI will block if they fail)
+1. All tests pass: `python -m pytest tests/ -v`
+2. Both linters pass: `black --check src/lore/ tests/ && ruff check src/lore/ tests/`
 
 ---
 
