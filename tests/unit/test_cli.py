@@ -9,6 +9,7 @@ from unittest import mock
 
 import pytest
 
+from lore.cli import _has_hook_command
 from lore.config.utils import config_path, db_path
 from lore.store.base import KnowledgeEntry
 from lore.store.sqlite import SQLiteStore, create_schema
@@ -676,9 +677,14 @@ def test_init_registers_hooks(tmp_path):
     assert settings.exists()
     data = json.loads(settings.read_text())
     hooks = data["hooks"]
-    assert any(h["command"] == "lore hook recall" for h in hooks["UserPromptSubmit"])
-    assert any(h["command"] == "lore hook nudge" for h in hooks["PostToolUse"])
-    assert any(h["command"] == "lore hook capture" for h in hooks["Stop"])
+    assert _has_hook_command(hooks["UserPromptSubmit"], "lore hook recall")
+    assert _has_hook_command(hooks["PostToolUse"], "lore hook nudge")
+    assert _has_hook_command(hooks["SessionEnd"], "lore hook capture")
+    for event in hooks:
+        for matcher_entry in hooks[event]:
+            assert "matcher" in matcher_entry
+            assert "hooks" in matcher_entry
+            assert isinstance(matcher_entry["hooks"], list)
 
 
 def test_init_hooks_idempotent(tmp_path):
@@ -695,7 +701,7 @@ def test_init_hooks_idempotent(tmp_path):
     data = json.loads(settings.read_text())
     assert len(data["hooks"]["UserPromptSubmit"]) == 1
     assert len(data["hooks"]["PostToolUse"]) == 1
-    assert len(data["hooks"]["Stop"]) == 1
+    assert len(data["hooks"]["SessionEnd"]) == 1
 
 
 def test_init_hooks_merges_existing(tmp_path):
@@ -708,7 +714,12 @@ def test_init_hooks_merges_existing(tmp_path):
                 "permissions": {"allow": ["npm test"]},
                 "hooks": {
                     "UserPromptSubmit": [
-                        {"type": "command", "command": "other-tool hook"}
+                        {
+                            "matcher": "",
+                            "hooks": [
+                                {"type": "command", "command": "other-tool hook"}
+                            ],
+                        }
                     ]
                 },
             }
@@ -723,9 +734,131 @@ def test_init_hooks_merges_existing(tmp_path):
     data = json.loads((claude_dir / "settings.json").read_text())
     assert data["permissions"]["allow"] == ["npm test"]
     assert len(data["hooks"]["UserPromptSubmit"]) == 2
-    assert any(
-        h["command"] == "other-tool hook" for h in data["hooks"]["UserPromptSubmit"]
+    assert _has_hook_command(data["hooks"]["UserPromptSubmit"], "other-tool hook")
+    assert _has_hook_command(data["hooks"]["UserPromptSubmit"], "lore hook recall")
+
+
+def test_init_hooks_migrates_old_format(tmp_path):
+    project_dir = tmp_path / "myproject"
+    claude_dir = project_dir / ".claude"
+    claude_dir.mkdir(parents=True)
+    (claude_dir / "settings.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "UserPromptSubmit": [
+                        {"type": "command", "command": "lore hook recall"}
+                    ],
+                    "PostToolUse": [{"type": "command", "command": "lore hook nudge"}],
+                    "Stop": [{"type": "command", "command": "lore hook capture"}],
+                }
+            }
+        )
     )
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        from lore.cli import _register_hooks
+
+        _register_hooks()
+
+    data = json.loads((claude_dir / "settings.json").read_text())
+    hooks = data["hooks"]
+    assert "Stop" not in hooks
+    assert "SessionEnd" in hooks
+    assert len(hooks["UserPromptSubmit"]) == 1
+    assert len(hooks["PostToolUse"]) == 1
+    assert len(hooks["SessionEnd"]) == 1
+    assert _has_hook_command(hooks["UserPromptSubmit"], "lore hook recall")
+    assert _has_hook_command(hooks["SessionEnd"], "lore hook capture")
+    for event in hooks:
+        for matcher_entry in hooks[event]:
+            assert "matcher" in matcher_entry
+            assert "hooks" in matcher_entry
+
+
+# =====================================================================
+# MCP server trust + tool permissions
+# =====================================================================
+
+
+def test_enable_mcp_server_trust(tmp_path):
+    home = tmp_path / "home"
+    claude_dir = home / ".claude"
+    claude_dir.mkdir(parents=True)
+    (claude_dir / "settings.json").write_text("{}")
+
+    with mock.patch.object(Path, "home", return_value=home):
+        from lore.cli import _enable_mcp_server_trust
+
+        _enable_mcp_server_trust()
+
+    data = json.loads((claude_dir / "settings.json").read_text())
+    assert "lore" in data["enabledMcpjsonServers"]
+
+
+def test_enable_mcp_server_trust_idempotent(tmp_path):
+    home = tmp_path / "home"
+    claude_dir = home / ".claude"
+    claude_dir.mkdir(parents=True)
+    (claude_dir / "settings.json").write_text(
+        json.dumps({"enabledMcpjsonServers": ["lore", "other"]})
+    )
+
+    with mock.patch.object(Path, "home", return_value=home):
+        from lore.cli import _enable_mcp_server_trust
+
+        _enable_mcp_server_trust()
+
+    data = json.loads((claude_dir / "settings.json").read_text())
+    assert data["enabledMcpjsonServers"].count("lore") == 1
+    assert "other" in data["enabledMcpjsonServers"]
+
+
+def test_enable_mcp_server_trust_creates_dir(tmp_path):
+    home = tmp_path / "home"
+
+    with mock.patch.object(Path, "home", return_value=home):
+        from lore.cli import _enable_mcp_server_trust
+
+        _enable_mcp_server_trust()
+
+    settings = home / ".claude" / "settings.json"
+    assert settings.exists()
+    data = json.loads(settings.read_text())
+    assert "lore" in data["enabledMcpjsonServers"]
+
+
+def test_allow_mcp_tools(tmp_path):
+    project_dir = tmp_path / "myproject"
+    claude_dir = project_dir / ".claude"
+    claude_dir.mkdir(parents=True)
+    (claude_dir / "settings.json").write_text("{}")
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        from lore.cli import _allow_mcp_tools
+
+        _allow_mcp_tools()
+
+    data = json.loads((claude_dir / "settings.json").read_text())
+    assert "mcp__lore__*" in data["permissions"]["allow"]
+
+
+def test_allow_mcp_tools_idempotent(tmp_path):
+    project_dir = tmp_path / "myproject"
+    claude_dir = project_dir / ".claude"
+    claude_dir.mkdir(parents=True)
+    (claude_dir / "settings.json").write_text(
+        json.dumps({"permissions": {"allow": ["mcp__lore__*", "npm test"]}})
+    )
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        from lore.cli import _allow_mcp_tools
+
+        _allow_mcp_tools()
+
+    data = json.loads((claude_dir / "settings.json").read_text())
+    assert data["permissions"]["allow"].count("mcp__lore__*") == 1
+    assert "npm test" in data["permissions"]["allow"]
 
 
 # =====================================================================

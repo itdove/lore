@@ -150,27 +150,71 @@ def _register_mcp() -> None:
     _write_json_file(mcp_json, data)
 
 
+def _has_hook_command(matchers: list[dict], command: str) -> bool:
+    return any(
+        h.get("command") == command for m in matchers for h in m.get("hooks", [])
+    )
+
+
 def _register_hooks() -> None:
     settings_path = Path.cwd() / ".claude" / "settings.json"
     data = _load_json_file(settings_path)
     hooks = data.setdefault("hooks", {})
 
+    changed = False
+
+    for event in list(hooks.keys()):
+        entries = hooks[event]
+        migrated = []
+        for entry in entries:
+            if "hooks" in entry:
+                migrated.append(entry)
+            elif "command" in entry:
+                migrated.append({"matcher": "", "hooks": [entry]})
+                changed = True
+        hooks[event] = migrated
+
+    if "Stop" in hooks:
+        hooks.setdefault("SessionEnd", []).extend(hooks.pop("Stop"))
+        changed = True
+
     desired = {
         "UserPromptSubmit": "lore hook recall",
         "PostToolUse": "lore hook nudge",
-        "Stop": "lore hook capture",
+        "SessionEnd": "lore hook capture",
     }
 
-    changed = False
     for event, command in desired.items():
-        existing = hooks.get(event, [])
-        if any(h.get("command") == command for h in existing):
+        matchers = hooks.get(event, [])
+        if _has_hook_command(matchers, command):
             continue
-        existing.append({"type": "command", "command": command})
-        hooks[event] = existing
+        matchers.append(
+            {"matcher": "", "hooks": [{"type": "command", "command": command}]}
+        )
+        hooks[event] = matchers
         changed = True
 
     if changed:
+        _write_json_file(settings_path, data)
+
+
+def _enable_mcp_server_trust() -> None:
+    settings_path = Path.home() / ".claude" / "settings.json"
+    data = _load_json_file(settings_path)
+    servers = data.setdefault("enabledMcpjsonServers", [])
+    if "lore" not in servers:
+        servers.append("lore")
+        _write_json_file(settings_path, data)
+
+
+def _allow_mcp_tools() -> None:
+    settings_path = Path.cwd() / ".claude" / "settings.json"
+    data = _load_json_file(settings_path)
+    permissions = data.setdefault("permissions", {})
+    allowed = permissions.setdefault("allow", [])
+    tool_pattern = "mcp__lore__*"
+    if tool_pattern not in allowed:
+        allowed.append(tool_pattern)
         _write_json_file(settings_path, data)
 
 
@@ -209,6 +253,12 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
     _register_hooks()
     print("  Hooks registered (.claude/settings.json)")
+
+    _allow_mcp_tools()
+    print("  MCP tool permissions added (.claude/settings.json)")
+
+    _enable_mcp_server_trust()
+    print("  MCP server trusted (~/.claude/settings.json)")
 
     if hierarchy:
         print("\nRunning first sync...")
@@ -679,7 +729,7 @@ def main(argv: list[str] | None = None) -> None:
     hook_sub = hook_parser.add_subparsers(dest="hook_command")
     hook_sub.add_parser("recall", help="Recall context (UserPromptSubmit)")
     hook_sub.add_parser("nudge", help="Mid-session nudge (PostToolUse)")
-    hook_sub.add_parser("capture", help="Capture knowledge (Stop)")
+    hook_sub.add_parser("capture", help="Capture knowledge (SessionEnd)")
 
     args = parser.parse_args(argv)
 
