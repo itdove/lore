@@ -165,21 +165,6 @@ def _register_hooks() -> None:
 
     changed = False
 
-    for event in list(hooks.keys()):
-        entries = hooks[event]
-        migrated = []
-        for entry in entries:
-            if "hooks" in entry:
-                migrated.append(entry)
-            elif "command" in entry:
-                migrated.append({"matcher": "", "hooks": [entry]})
-                changed = True
-        hooks[event] = migrated
-
-    if "Stop" in hooks:
-        hooks.setdefault("SessionEnd", []).extend(hooks.pop("Stop"))
-        changed = True
-
     desired = {
         "UserPromptSubmit": "lore hook recall",
         "PostToolUse": "lore hook nudge",
