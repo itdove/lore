@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import subprocess
 from pathlib import Path
+
+_CLONE_TIMEOUT = 300
+_FETCH_TIMEOUT = 120
+_LOCAL_TIMEOUT = 30
+
+
+def _redact_url_creds(text: str) -> str:
+    return re.sub(r"(https?://)([^@]+)@", r"\1****@", text)
 
 
 class SyncError(Exception):
@@ -48,10 +57,16 @@ class GitRepoManager:
                     check=True,
                     capture_output=True,
                     text=True,
+                    timeout=_CLONE_TIMEOUT,
                 )
+            except subprocess.TimeoutExpired as exc:
+                raise SyncError(
+                    f"Timed out cloning {repo}@{branch} " f"after {_CLONE_TIMEOUT}s"
+                ) from exc
             except subprocess.CalledProcessError as exc:
                 raise SyncError(
-                    f"Failed to clone {repo}@{branch}: {exc.stderr.strip()}"
+                    f"Failed to clone {repo}@{branch}: "
+                    f"{_redact_url_creds(exc.stderr.strip())}"
                 ) from exc
         else:
             try:
@@ -60,6 +75,7 @@ class GitRepoManager:
                     check=True,
                     capture_output=True,
                     text=True,
+                    timeout=_FETCH_TIMEOUT,
                 )
                 subprocess.run(
                     [
@@ -73,10 +89,14 @@ class GitRepoManager:
                     check=True,
                     capture_output=True,
                     text=True,
+                    timeout=_LOCAL_TIMEOUT,
                 )
+            except subprocess.TimeoutExpired as exc:
+                raise SyncError(f"Timed out syncing {repo}@{branch}") from exc
             except subprocess.CalledProcessError as exc:
                 raise SyncError(
-                    f"Failed to pull {repo}@{branch}: {exc.stderr.strip()}"
+                    f"Failed to pull {repo}@{branch}: "
+                    f"{_redact_url_creds(exc.stderr.strip())}"
                 ) from exc
 
         return self.get_head_sha(path)
@@ -88,5 +108,6 @@ class GitRepoManager:
             check=True,
             capture_output=True,
             text=True,
+            timeout=_LOCAL_TIMEOUT,
         )
         return result.stdout.strip()

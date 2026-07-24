@@ -102,26 +102,9 @@ class SQLiteStore(StoreBackend):
         self._conn.row_factory = sqlite3.Row
 
     def _row_to_entry(self, row: sqlite3.Row) -> KnowledgeEntry:
-        return KnowledgeEntry(
-            id=row["id"],
-            key=row["key"],
-            value=row["value"],
-            tags=row["tags"],
-            level=row["level"],
-            level_name=row["level_name"],
-            locked=bool(row["locked"]),
-            conflict_with=row["conflict_with"],
-            conflict_status=row["conflict_status"],
-            repo_url=row["repo_url"],
-            repo_branch=row["repo_branch"],
-            ingested_from=row["ingested_from"],
-            provenance=row["provenance"],
-            times_seen=row["times_seen"],
-            projects=row["projects"],
-            embedding=row["embedding"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-        )
+        d = dict(row)
+        d["locked"] = bool(d["locked"])
+        return KnowledgeEntry(**d)
 
     def _log_history(
         self,
@@ -137,12 +120,13 @@ class SQLiteStore(StoreBackend):
             (uuid.uuid4().hex, knowledge_id, action, previous_value, actor, reason),
         )
 
-    def store(self, entry: KnowledgeEntry) -> str:
-        entry_id = entry.id or uuid.uuid4().hex
-        now = datetime.now(timezone.utc).isoformat()
-        created = entry.created_at or now
-        updated = entry.updated_at or now
-
+    def _insert_entry(
+        self,
+        entry: KnowledgeEntry,
+        entry_id: str,
+        created_at: str,
+        updated_at: str,
+    ) -> None:
         placeholders = ", ".join("?" for _ in _KNOWLEDGE_COLUMNS)
         cols = ", ".join(_KNOWLEDGE_COLUMNS)
         self._conn.execute(
@@ -164,10 +148,18 @@ class SQLiteStore(StoreBackend):
                 entry.times_seen,
                 entry.projects,
                 entry.embedding,
-                created,
-                updated,
+                created_at,
+                updated_at,
             ),
         )
+
+    def store(self, entry: KnowledgeEntry) -> str:
+        entry_id = entry.id or uuid.uuid4().hex
+        now = datetime.now(timezone.utc).isoformat()
+        created = entry.created_at or now
+        updated = entry.updated_at or now
+
+        self._insert_entry(entry, entry_id, created, updated)
         self._log_history(entry_id, "created")
         self._conn.commit()
         return entry_id
@@ -209,12 +201,23 @@ class SQLiteStore(StoreBackend):
             f"LIMIT ?"
         )
 
-        rows = self._conn.execute(sql, params).fetchall()
+        try:
+            rows = self._conn.execute(sql, params).fetchall()
+        except sqlite3.OperationalError:
+            return []
         return [self._row_to_entry(row) for row in rows]
 
     def get(self, key: str) -> KnowledgeEntry | None:
         row = self._conn.execute(
             "SELECT * FROM knowledge WHERE key = ? LIMIT 1", (key,)
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_entry(row)
+
+    def get_by_id(self, entry_id: str) -> KnowledgeEntry | None:
+        row = self._conn.execute(
+            "SELECT * FROM knowledge WHERE id = ? LIMIT 1", (entry_id,)
         ).fetchone()
         if row is None:
             return None
@@ -296,31 +299,7 @@ class SQLiteStore(StoreBackend):
         if existing is None:
             entry_id = entry.id or uuid.uuid4().hex
             created = entry.created_at or now
-            placeholders = ", ".join("?" for _ in _KNOWLEDGE_COLUMNS)
-            cols = ", ".join(_KNOWLEDGE_COLUMNS)
-            self._conn.execute(
-                f"INSERT INTO knowledge ({cols}) VALUES ({placeholders})",
-                (
-                    entry_id,
-                    entry.key,
-                    entry.value,
-                    entry.tags,
-                    entry.level,
-                    entry.level_name,
-                    entry.locked,
-                    entry.conflict_with,
-                    entry.conflict_status,
-                    entry.repo_url,
-                    entry.repo_branch,
-                    entry.ingested_from,
-                    entry.provenance,
-                    entry.times_seen,
-                    entry.projects,
-                    entry.embedding,
-                    created,
-                    now,
-                ),
-            )
+            self._insert_entry(entry, entry_id, created, now)
             self._log_history(entry_id, "created")
             self._conn.commit()
             return entry_id, "created"
@@ -395,8 +374,9 @@ class SQLiteStore(StoreBackend):
         params: list = []
 
         if tag is not None:
-            conditions.append("tags LIKE ?")
-            params.append(f"%{tag}%")
+            escaped = tag.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conditions.append("(',' || tags || ',') LIKE ? ESCAPE '\\'")
+            params.append(f"%,{escaped},%")
 
         if level is not None:
             conditions.append("level = ?")
@@ -414,30 +394,47 @@ class SQLiteStore(StoreBackend):
         ).fetchall()
         return [self._row_to_entry(row) for row in rows]
 
+    def delete_promoted_locals(self) -> int:
+        rows = self._conn.execute(
+            "SELECT * FROM knowledge WHERE level = 0 "
+            "AND key IN (SELECT DISTINCT key FROM knowledge WHERE level > 0)"
+        ).fetchall()
+        count = 0
+        for row in rows:
+            self._log_history(
+                row["id"],
+                "synced_out",
+                previous_value=row["value"],
+                actor="sync",
+                reason="promoted to shared level",
+            )
+            self._conn.execute("DELETE FROM knowledge WHERE id = ?", (row["id"],))
+            count += 1
+        if count:
+            self._conn.commit()
+        return count
+
     def health(self) -> dict:
-        total = self._conn.execute("SELECT COUNT(*) FROM knowledge").fetchone()[0]
+        row = self._conn.execute(
+            "SELECT "
+            "COUNT(*) AS total, "
+            "COUNT(CASE WHEN conflict_with IS NOT NULL THEN 1 END) AS conflicts, "
+            "COUNT(CASE WHEN updated_at < datetime('now', '-90 days') "
+            "THEN 1 END) AS stale, "
+            "MIN(updated_at) AS oldest, "
+            "MAX(updated_at) AS newest "
+            "FROM knowledge"
+        ).fetchone()
 
         level_rows = self._conn.execute(
             "SELECT level, COUNT(*) FROM knowledge GROUP BY level"
         ).fetchall()
-        entries_by_level = {row[0]: row[1] for row in level_rows}
-
-        conflict_count = self._conn.execute(
-            "SELECT COUNT(*) FROM knowledge WHERE conflict_with IS NOT NULL"
-        ).fetchone()[0]
-
-        oldest = self._conn.execute("SELECT MIN(updated_at) FROM knowledge").fetchone()[
-            0
-        ]
-
-        newest = self._conn.execute("SELECT MAX(updated_at) FROM knowledge").fetchone()[
-            0
-        ]
 
         return {
-            "total_entries": total,
-            "entries_by_level": entries_by_level,
-            "conflict_count": conflict_count,
-            "oldest_entry": oldest,
-            "newest_entry": newest,
+            "total_entries": row[0],
+            "entries_by_level": {r[0]: r[1] for r in level_rows},
+            "conflict_count": row[1],
+            "oldest_entry": row[3],
+            "newest_entry": row[4],
+            "stale_count": row[2],
         }

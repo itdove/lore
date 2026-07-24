@@ -16,6 +16,8 @@ env/
 # IDE
 .vscode/
 .idea/
+.cursor/
+.opencode/
 *.swp
 .DS_Store
 
@@ -32,6 +34,11 @@ htmlcov/
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/release/
+
+# AI agent context
+.wolf/
+CLAUDE.md
+GEMINI.md
 
 # Temporary
 *.tmp

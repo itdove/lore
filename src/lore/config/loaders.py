@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +17,6 @@ class _ConfigCacheEntry:
     global_path: str | None = None
     project_path: str | None = None
     inline_value: str | None = None
-    last_accessed: float = field(default_factory=time.monotonic)
 
 
 _caches: dict[str, _ConfigCacheEntry] = {}
@@ -81,7 +79,7 @@ def load_global_config() -> dict:
             and entry.global_mtime == global_mtime
             and entry.inline_value == inline_value
         ):
-            entry.last_accessed = time.monotonic()
+
             return entry.result
 
     result = _load_global_config_raw()
@@ -105,7 +103,7 @@ def load_project_config(project_dir: Path) -> dict:
             entry.project_path == str(project_path)
             and entry.project_mtime == project_mtime
         ):
-            entry.last_accessed = time.monotonic()
+
             return entry.result
 
     result = _load_project_config_raw(project_dir)

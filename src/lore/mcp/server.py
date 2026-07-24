@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import importlib.resources
-from dataclasses import asdict
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 from lore.config.manager import get_global_config
-from lore.config.utils import db_path
+from lore.store import get_store as _create_store
 from lore.store.base import KnowledgeEntry
 from lore.store.priority import resolve_priority
-from lore.store.sqlite import SQLiteStore, create_schema
+from lore.store.sqlite import SQLiteStore
 
 
 def _load_lore_instructions() -> str:
@@ -20,15 +19,19 @@ def _load_lore_instructions() -> str:
     return importlib.resources.read_text("lore.mcp.skills", "LORE.md")
 
 
+_store_instance: SQLiteStore | None = None
+
+
 def _get_store() -> SQLiteStore:
-    cfg = get_global_config()
-    path = cfg.store.path or str(db_path())
-    conn = create_schema(path)
-    return SQLiteStore(conn)
+    global _store_instance
+    if _store_instance is not None:
+        return _store_instance
+    _store_instance = _create_store()
+    return _store_instance
 
 
 def _entry_to_dict(entry: KnowledgeEntry) -> dict:
-    d = asdict(entry)
+    d = entry.__dict__.copy()
     d.pop("embedding", None)
     return d
 
@@ -61,19 +64,11 @@ def create_server() -> FastMCP:
         raw_results = store.query_fts(topic, limit=50, filter_levels=filter_levels)
         resolved = resolve_priority(raw_results)
 
-        results = [
-            {
-                "key": e.key,
-                "value": e.value,
-                "level": e.level,
-                "level_name": e.level_name,
-                "priority": e.level,
-                "locked": e.locked,
-                "tags": e.tags,
-                "times_seen": e.times_seen,
-            }
-            for e in resolved
-        ]
+        results = []
+        for e in resolved:
+            d = _entry_to_dict(e)
+            d["priority"] = e.level
+            results.append(d)
 
         synthesized = None
         cfg = get_global_config()
@@ -109,7 +104,7 @@ def create_server() -> FastMCP:
             d = _entry_to_dict(entry)
             if include_history:
                 history = store.get_history(entry.id)
-                d["history"] = [asdict(h) for h in history]
+                d["history"] = [h.__dict__.copy() for h in history]
             result_entries.append(d)
 
         return {"entries": result_entries}
@@ -129,12 +124,9 @@ def create_server() -> FastMCP:
             conflict_data = _entry_to_dict(entry)
             conflicting_entry = None
             if entry.conflict_with:
-                row = store._conn.execute(
-                    "SELECT * FROM knowledge WHERE id = ?",
-                    (entry.conflict_with,),
-                ).fetchone()
-                if row:
-                    conflicting_entry = _entry_to_dict(store._row_to_entry(row))
+                other = store.get_by_id(entry.conflict_with)
+                if other:
+                    conflicting_entry = _entry_to_dict(other)
 
             conflicts.append(
                 {
@@ -156,16 +148,11 @@ def create_server() -> FastMCP:
         store = _get_store()
         health = store.health()
 
-        stale_count = store._conn.execute(
-            "SELECT COUNT(*) FROM knowledge "
-            "WHERE updated_at < datetime('now', '-90 days')"
-        ).fetchone()[0]
-
         return {
             "total": health["total_entries"],
             "per_level": health["entries_by_level"],
             "conflicts": health["conflict_count"],
-            "stale_count": stale_count,
+            "stale_count": health["stale_count"],
             "last_sync": {},
         }
 

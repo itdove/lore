@@ -176,3 +176,11 @@ Before committing, ensure:
 - No CLI framework (argparse only)
 - No web framework until NiceGUI phase
 - Dev dependencies: pytest, pytest-cov, black, ruff
+
+<!-- openwolf:begin -->
+# OpenWolf
+
+@.wolf/OPENWOLF.md
+
+This project uses OpenWolf for context management. Read and follow .wolf/OPENWOLF.md every session. Check .wolf/cerebrum.md before generating code. Check .wolf/anatomy.md before reading files.
+<!-- openwolf:end -->
