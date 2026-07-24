@@ -54,10 +54,24 @@ class StoreBackend(ABC):
     def get(self, key: str) -> KnowledgeEntry | None: ...
 
     @abstractmethod
-    def update(self, key: str, value: str, reason: str, actor: str) -> None: ...
+    def get_by_key_and_level(self, key: str, level: int) -> KnowledgeEntry | None: ...
 
     @abstractmethod
-    def delete(self, key: str, reason: str, actor: str) -> None: ...
+    def update(
+        self,
+        key: str,
+        value: str,
+        reason: str,
+        actor: str,
+        *,
+        tags: str | None = None,
+        level: int | None = None,
+    ) -> None: ...
+
+    @abstractmethod
+    def delete(
+        self, key: str, reason: str, actor: str, *, level: int | None = None
+    ) -> None: ...
 
     @abstractmethod
     def list_entries(

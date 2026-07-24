@@ -350,3 +350,256 @@ def test_get_history(store):
 
 def test_get_history_empty(store):
     assert store.get_history("nonexistent") == []
+
+
+# =====================================================================
+# store_knowledge
+# =====================================================================
+
+
+def test_store_knowledge_individual(tools, store):
+    result = tools["store_knowledge"](
+        key="pattern:python:singleton",
+        value="Use module-level instances",
+        tags="python",
+    )
+    assert result["id"]
+    assert result["key"] == "pattern:python:singleton"
+    assert result["level"] == 0
+    assert result["pr_url"] is None
+
+    entry = store.get("pattern:python:singleton")
+    assert entry is not None
+    assert entry.value == "Use module-level instances"
+    assert entry.tags == "python"
+    assert entry.level == 0
+
+
+def test_store_knowledge_invalid_key(tools):
+    import pytest
+
+    with pytest.raises(ValueError, match="Invalid key format"):
+        tools["store_knowledge"](key="bad-key", value="val")
+
+
+def test_store_knowledge_invalid_key_too_few(tools):
+    import pytest
+
+    with pytest.raises(ValueError, match="Invalid key format"):
+        tools["store_knowledge"](key="only:two", value="val")
+
+
+def test_store_knowledge_invalid_key_empty_part(tools):
+    import pytest
+
+    with pytest.raises(ValueError, match="Invalid key format"):
+        tools["store_knowledge"](key="a::b", value="val")
+
+
+def test_store_knowledge_dedup_same_level(tools, store):
+    tools["store_knowledge"](
+        key="cfg:db:timeout", value="30s", tags="config"
+    )
+    tools["store_knowledge"](
+        key="cfg:db:timeout", value="60s", tags="config,updated"
+    )
+
+    entries = store.list_entries()
+    matching = [e for e in entries if e.key == "cfg:db:timeout"]
+    assert len(matching) == 1
+    assert matching[0].value == "60s"
+    assert matching[0].tags == "config,updated"
+
+
+def test_store_knowledge_dedup_different_level(tools, store):
+    tools["store_knowledge"](
+        key="cfg:db:timeout", value="local val", tags="config"
+    )
+    store.store(
+        _make_entry(
+            key="cfg:db:timeout",
+            value="shared val",
+            level=1,
+            level_name="team",
+        )
+    )
+
+    entries = store.list_entries()
+    matching = [e for e in entries if e.key == "cfg:db:timeout"]
+    assert len(matching) == 2
+
+
+def test_store_knowledge_update_does_not_corrupt_other_levels(tools, store):
+    tools["store_knowledge"](
+        key="cfg:db:timeout", value="local", tags="config"
+    )
+    store.store(
+        _make_entry(
+            key="cfg:db:timeout",
+            value="shared",
+            level=1,
+            level_name="team",
+        )
+    )
+    tools["store_knowledge"](
+        key="cfg:db:timeout", value="local v2", tags="config"
+    )
+
+    entries = store.list_entries()
+    shared = [
+        e for e in entries if e.key == "cfg:db:timeout" and e.level == 1
+    ]
+    assert len(shared) == 1
+    assert shared[0].value == "shared"
+
+
+def test_store_knowledge_shared_level(tools, store, monkeypatch):
+    import lore.mcp.server as srv
+    from lore.config.models import HierarchyLevel, ProjectConfig
+
+    monkeypatch.setattr(
+        srv,
+        "get_project_config",
+        lambda: ProjectConfig(
+            hierarchy=[
+                HierarchyLevel(
+                    level=1, repo="org/repo", branch="main", name="team"
+                )
+            ]
+        ),
+    )
+
+    result = tools["store_knowledge"](
+        key="guide:onboard:setup",
+        value="Run make install",
+        tags="onboarding",
+        level="team",
+    )
+    assert result["level"] == 1
+    assert result["pr_url"] is None  # stub
+
+    entry = store.get("guide:onboard:setup")
+    assert entry.level == 1
+    assert entry.level_name == "team"
+
+
+def test_store_knowledge_unknown_level(tools, monkeypatch):
+    import lore.mcp.server as srv
+    from lore.config.models import ProjectConfig
+
+    monkeypatch.setattr(
+        srv, "get_project_config", lambda: ProjectConfig(hierarchy=[])
+    )
+
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown level"):
+        tools["store_knowledge"](
+            key="a:b:c", value="val", level="nonexistent"
+        )
+
+
+def test_store_knowledge_history_logged(tools, store):
+    tools["store_knowledge"](key="fact:py:version", value="3.12", tags="python")
+    entry = store.get("fact:py:version")
+    history = store.get_history(entry.id)
+    assert any(h.action == "created" for h in history)
+
+
+# =====================================================================
+# negate_knowledge
+# =====================================================================
+
+
+def test_negate_knowledge_preserves_reason(tools, store):
+    store.store(_make_entry(key="fact:db:engine", value="PostgreSQL is fastest"))
+
+    result = tools["negate_knowledge"](
+        key="fact:db:engine", reason="Benchmarks were flawed"
+    )
+    assert result["negated"] is True
+    assert result["key"] == "fact:db:engine"
+    assert result["pr_url"] is None
+
+    entry = store.get("fact:db:engine")
+    assert "[NEGATED]" in entry.value
+    assert "Benchmarks were flawed" in entry.value
+    assert "PostgreSQL is fastest" in entry.value
+
+
+def test_negate_knowledge_history(tools, store):
+    entry_id = store.store(_make_entry(key="fact:api:rate", value="100 req/s"))
+    tools["negate_knowledge"](key="fact:api:rate", reason="Limit was raised")
+
+    history = store.get_history(entry_id)
+    updated = [h for h in history if h.action == "updated"]
+    assert any(h.previous_value == "100 req/s" for h in updated)
+
+
+def test_negate_knowledge_missing_key(tools, store):
+    result = tools["negate_knowledge"](key="missing:key:here", reason="test")
+    assert "error" in result
+    assert "not found" in result["error"].lower()
+
+
+# =====================================================================
+# delete_knowledge
+# =====================================================================
+
+
+def test_delete_knowledge_individual(tools, store):
+    store.store(_make_entry(key="tmp:scratch:note", value="temp data", level=0))
+
+    result = tools["delete_knowledge"](key="tmp:scratch:note")
+    assert result["deleted"] is True
+    assert result["key"] == "tmp:scratch:note"
+
+    assert store.get("tmp:scratch:note") is None
+
+
+def test_delete_knowledge_rejects_shared(tools, store):
+    store.store(
+        _make_entry(key="shared:team:convention", value="use tabs", level=1)
+    )
+
+    result = tools["delete_knowledge"](key="shared:team:convention")
+    assert "error" in result
+    assert "shared" in result["error"].lower()
+    assert "PR" in result["error"] or "pr" in result["error"].lower()
+
+    assert store.get("shared:team:convention") is not None
+
+
+def test_delete_knowledge_missing_key(tools, store):
+    result = tools["delete_knowledge"](key="missing:key:here")
+    assert "error" in result
+    assert "not found" in result["error"].lower()
+
+
+def test_delete_knowledge_does_not_remove_shared_sibling(tools, store):
+    store.store(_make_entry(key="cfg:db:timeout", value="local", level=0))
+    store.store(
+        _make_entry(
+            key="cfg:db:timeout",
+            value="shared",
+            level=1,
+            level_name="team",
+        )
+    )
+    tools["delete_knowledge"](key="cfg:db:timeout")
+
+    shared = [
+        e
+        for e in store.list_entries()
+        if e.key == "cfg:db:timeout" and e.level == 1
+    ]
+    assert len(shared) == 1
+    assert shared[0].value == "shared"
+
+
+def test_delete_knowledge_history_logged(tools, store):
+    entry_id = store.store(_make_entry(key="tmp:old:data", value="old stuff", level=0))
+    tools["delete_knowledge"](key="tmp:old:data")
+
+    history = store.get_history(entry_id)
+    assert any(h.action == "deleted" for h in history)

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import importlib.resources
+import re
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from lore.config.manager import get_global_config
+from lore.config.manager import get_global_config, get_project_config
 from lore.store import get_store as _create_store
 from lore.store.base import KnowledgeEntry
 from lore.store.priority import resolve_priority
@@ -34,6 +35,31 @@ def _entry_to_dict(entry: KnowledgeEntry) -> dict:
     d = entry.__dict__.copy()
     d.pop("embedding", None)
     return d
+
+
+_KEY_RE = re.compile(r"^[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+$")
+_SHARED_DELETE_ERR = "shared entry — submit PR to the knowledge repo to delete"
+
+
+def _validate_key(key: str) -> None:
+    if not _KEY_RE.match(key):
+        raise ValueError(
+            f"Invalid key format: '{key}'. "
+            "Expected 'type:domain:slug' with alphanumeric, hyphens, underscores."
+        )
+
+
+def _resolve_level(level_name: str) -> tuple[int, str, str | None, str | None]:
+    if level_name == "individual":
+        return 0, "individual", None, None
+    cfg = get_project_config()
+    for h in cfg.hierarchy:
+        if h.name == level_name:
+            return h.level, level_name, h.repo, h.branch
+    available = ["individual"] + [h.name for h in cfg.hierarchy if h.name]
+    raise ValueError(
+        f"Unknown level '{level_name}'. Available: {available}"
+    )
 
 
 def create_server() -> FastMCP:
@@ -155,5 +181,127 @@ def create_server() -> FastMCP:
             "stale_count": health["stale_count"],
             "last_sync": {},
         }
+
+    @server.tool()
+    def store_knowledge(
+        key: str,
+        value: str,
+        tags: str | None = None,
+        level: str = "individual",
+    ) -> dict:
+        """Store a knowledge entry.
+
+        Args:
+            key: Knowledge key in 'type:domain:slug' format.
+            value: The knowledge content to store.
+            tags: Comma-separated tags for categorization.
+            level: Target level — 'individual' for local-only, or a
+                configured hierarchy level name for shared storage.
+
+        Returns:
+            Entry id, key, level, and pr_url (null for individual,
+            stub for shared until GitInterface is wired).
+        """
+        _validate_key(key)
+        level_int, level_name, repo_url, repo_branch = _resolve_level(level)
+        store = _get_store()
+
+        existing = store.get_by_key_and_level(key, level_int)
+        if existing:
+            store.update(
+                key,
+                value,
+                reason="updated via store_knowledge",
+                actor="mcp",
+                tags=tags,
+                level=level_int,
+            )
+            entry_id = existing.id
+        else:
+            entry = KnowledgeEntry(
+                key=key,
+                value=value,
+                tags=tags or "",
+                level=level_int,
+                level_name=level_name,
+                repo_url=repo_url,
+                repo_branch=repo_branch,
+            )
+            entry_id = store.store(entry)
+
+        pr_url = None
+        # TODO(#11): shared levels create PR via GitInterface
+
+        return {"id": entry_id, "key": key, "level": level_int, "pr_url": pr_url}
+
+    @server.tool()
+    def negate_knowledge(
+        key: str,
+        reason: str,
+        level: str = "individual",
+    ) -> dict:
+        """Negate a knowledge entry, preserving why it was invalidated.
+
+        Preferred over delete — agents see *why* something changed.
+
+        Args:
+            key: The knowledge key to negate.
+            reason: Why this knowledge is being negated.
+            level: Target level — 'individual' or a configured hierarchy
+                level name.
+
+        Returns:
+            The negated key and pr_url (null for individual, stub for shared).
+        """
+        level_int, _, _, _ = _resolve_level(level)
+        store = _get_store()
+        existing = store.get_by_key_and_level(key, level_int)
+        if existing is None:
+            return {"error": f"Key not found: '{key}' at level '{level}'"}
+
+        negation_value = f"[NEGATED] {reason}\n\nPrevious value: {existing.value}"
+        store.update(key, negation_value, reason=reason, actor="mcp", level=level_int)
+
+        pr_url = None
+        # TODO(#11): shared levels create PR via GitInterface
+
+        return {"key": key, "negated": True, "pr_url": pr_url}
+
+    @server.tool()
+    def delete_knowledge(
+        key: str,
+        level: str = "individual",
+    ) -> dict:
+        """Delete a knowledge entry from the local store.
+
+        Individual entries are deleted immediately. Shared entries must be
+        deleted via a PR to the knowledge repo.
+
+        Args:
+            key: The knowledge key to delete.
+            level: Target level — 'individual' or a configured hierarchy
+                level name.
+
+        Returns:
+            Confirmation of deletion, or error for shared entries.
+        """
+        level_int, _, _, _ = _resolve_level(level)
+        store = _get_store()
+        existing = store.get_by_key_and_level(key, level_int)
+        if existing is None:
+            other = store.get(key)
+            if other is not None and other.level > 0:
+                return {
+                    "error": _SHARED_DELETE_ERR
+                }
+            return {"error": f"Key not found: '{key}' at level '{level}'"}
+
+        if existing.level > 0:
+            return {
+                "error": _SHARED_DELETE_ERR
+            }
+
+        store.delete(key, reason="deleted via MCP", actor="mcp", level=level_int)
+        return {"key": key, "deleted": True}
 
     return server
