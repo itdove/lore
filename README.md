@@ -105,6 +105,15 @@ lore search "authentication patterns"
 # Show conflict report
 lore conflicts
 
+# View and edit configuration
+lore config show              # Merged config (global + project)
+lore config show --global     # Global config only
+lore config show --project    # Project config only
+lore config set <key> <value> # Set value using dot notation
+lore config set --global <key> <value>  # Set in global config
+lore config edit              # Open project config in $EDITOR
+lore config edit --global     # Open global config in $EDITOR
+
 # Start MCP server (used by AI agents, not run directly)
 lore mcp-server
 ```
@@ -136,6 +145,7 @@ python -m pytest tests/ -v
 - MCP tool handlers: query, list, conflicts, health ([#5](https://github.com/itdove/lore/issues/5))
 - Git repo sync engine: clone/pull, parse markdown frontmatter, index to SQLite ([#6](https://github.com/itdove/lore/issues/6))
 - CLI: `lore init`, `lore sync`, `lore search`, `lore conflicts`, `lore mcp-server` ([#7](https://github.com/itdove/lore/issues/7))
+- Config CLI: `lore config show`, `lore config set`, `lore config edit` ([#29](https://github.com/itdove/lore/issues/29))
 - CI/CD with pytest, black, ruff ([#22](https://github.com/itdove/lore/issues/22))
 
 See [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the phased roadmap.

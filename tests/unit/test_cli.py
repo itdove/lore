@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import argparse
 import json
+import os
 from pathlib import Path
 from unittest import mock
 
@@ -356,5 +358,266 @@ def test_main_conflicts_exits_zero(store):
 
         with pytest.raises(SystemExit) as exc_info:
             main(["conflicts"])
+
+    assert exc_info.value.code == 0
+
+
+# =====================================================================
+# lore config show
+# =====================================================================
+
+
+def test_config_show_merged(tmp_path, capsys):
+    project_dir = tmp_path / "myproject"
+    lore_dir = project_dir / ".lore"
+    lore_dir.mkdir(parents=True)
+
+    global_data = {"lore": {"store": {"type": "sqlite"}, "projects": []}}
+    config_path().parent.mkdir(parents=True, exist_ok=True)
+    config_path().write_text(json.dumps(global_data))
+
+    project_data = {"lore": {"hierarchy": [{"level": 1, "repo": "https://x.git", "branch": "main"}]}}
+    (lore_dir / "config.json").write_text(json.dumps(project_data))
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        import argparse
+
+        from lore.cli import _cmd_config_show
+
+        rc = _cmd_config_show(argparse.Namespace(global_=False, project=False))
+
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["lore"]["store"]["type"] == "sqlite"
+    assert len(out["lore"]["hierarchy"]) == 1
+
+
+def test_config_show_global_only(tmp_path, capsys):
+    global_data = {"lore": {"store": {"type": "sqlite"}}}
+    config_path().parent.mkdir(parents=True, exist_ok=True)
+    config_path().write_text(json.dumps(global_data))
+
+    from lore.cli import _cmd_config_show
+
+    rc = _cmd_config_show(argparse.Namespace(global_=True, project=False))
+
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["lore"]["store"]["type"] == "sqlite"
+
+
+def test_config_show_project_only(tmp_path, capsys):
+    project_dir = tmp_path / "myproject"
+    lore_dir = project_dir / ".lore"
+    lore_dir.mkdir(parents=True)
+
+    project_data = {"lore": {"hierarchy": []}}
+    (lore_dir / "config.json").write_text(json.dumps(project_data))
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        from lore.cli import _cmd_config_show
+
+        rc = _cmd_config_show(argparse.Namespace(global_=False, project=True))
+
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["lore"]["hierarchy"] == []
+
+
+def test_config_show_project_not_in_lore(tmp_path, capsys):
+    bare_dir = tmp_path / "bare"
+    bare_dir.mkdir()
+
+    with mock.patch.object(Path, "cwd", return_value=bare_dir):
+        from lore.cli import _cmd_config_show
+
+        rc = _cmd_config_show(argparse.Namespace(global_=False, project=True))
+
+    assert rc == 1
+    assert "Not in a lore project" in capsys.readouterr().err
+
+
+# =====================================================================
+# lore config set
+# =====================================================================
+
+
+def test_config_set_project(tmp_path, capsys):
+    project_dir = tmp_path / "myproject"
+    lore_dir = project_dir / ".lore"
+    lore_dir.mkdir(parents=True)
+    (lore_dir / "config.json").write_text("{}")
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        from lore.cli import _cmd_config_set
+
+        rc = _cmd_config_set(
+            argparse.Namespace(key="lore.store.path", value="/tmp/db.sqlite", global_=False)
+        )
+
+    assert rc == 0
+    data = json.loads((lore_dir / "config.json").read_text())
+    assert data["lore"]["store"]["path"] == "/tmp/db.sqlite"
+
+
+def test_config_set_global(tmp_path, capsys):
+    config_path().parent.mkdir(parents=True, exist_ok=True)
+    config_path().write_text("{}")
+
+    from lore.cli import _cmd_config_set
+
+    rc = _cmd_config_set(
+        argparse.Namespace(key="lore.sync_interval", value="10m", global_=True)
+    )
+
+    assert rc == 0
+    data = json.loads(config_path().read_text())
+    assert data["lore"]["sync_interval"] == "10m"
+
+
+def test_config_set_parses_types(tmp_path, capsys):
+    project_dir = tmp_path / "myproject"
+    lore_dir = project_dir / ".lore"
+    lore_dir.mkdir(parents=True)
+    (lore_dir / "config.json").write_text("{}")
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        from lore.cli import _cmd_config_set
+
+        _cmd_config_set(argparse.Namespace(key="a", value="true", global_=False))
+        _cmd_config_set(argparse.Namespace(key="b", value="42", global_=False))
+        _cmd_config_set(argparse.Namespace(key="c", value="null", global_=False))
+        _cmd_config_set(argparse.Namespace(key="d", value="3.14", global_=False))
+
+    data = json.loads((lore_dir / "config.json").read_text())
+    assert data["a"] is True
+    assert data["b"] == 42
+    assert data["c"] is None
+    assert data["d"] == 3.14
+
+
+def test_config_set_not_in_lore(tmp_path, capsys):
+    bare_dir = tmp_path / "bare"
+    bare_dir.mkdir()
+
+    with mock.patch.object(Path, "cwd", return_value=bare_dir):
+        from lore.cli import _cmd_config_set
+
+        rc = _cmd_config_set(
+            argparse.Namespace(key="lore.x", value="y", global_=False)
+        )
+
+    assert rc == 1
+    assert "Not in a lore project" in capsys.readouterr().err
+
+
+# =====================================================================
+# lore config edit
+# =====================================================================
+
+
+def test_config_edit_opens_editor(tmp_path, capsys):
+    project_dir = tmp_path / "myproject"
+    lore_dir = project_dir / ".lore"
+    lore_dir.mkdir(parents=True)
+    (lore_dir / "config.json").write_text('{"lore": {}}')
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        with mock.patch("subprocess.run", return_value=mock.MagicMock(returncode=0)) as mock_run:
+            with mock.patch.dict(os.environ, {"EDITOR": "nano"}):
+                from lore.cli import _cmd_config_edit
+
+                rc = _cmd_config_edit(argparse.Namespace(global_=False))
+
+    assert rc == 0
+    mock_run.assert_called_once_with(["nano", str(lore_dir / "config.json")])
+
+
+def test_config_edit_global(tmp_path, capsys):
+    config_path().parent.mkdir(parents=True, exist_ok=True)
+    config_path().write_text("{}")
+
+    with mock.patch("subprocess.run", return_value=mock.MagicMock(returncode=0)) as mock_run:
+        with mock.patch.dict(os.environ, {"VISUAL": "code"}):
+            from lore.cli import _cmd_config_edit
+
+            rc = _cmd_config_edit(argparse.Namespace(global_=True))
+
+    assert rc == 0
+    mock_run.assert_called_once_with(["code", str(config_path())])
+
+
+def test_config_edit_invalid_json(tmp_path, capsys):
+    project_dir = tmp_path / "myproject"
+    lore_dir = project_dir / ".lore"
+    lore_dir.mkdir(parents=True)
+    cfg_file = lore_dir / "config.json"
+    cfg_file.write_text('{"lore": {}}')
+
+    def fake_editor(cmd):
+        cfg_file.write_text("not valid json {{{")
+        return mock.MagicMock(returncode=0)
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        with mock.patch("subprocess.run", side_effect=fake_editor):
+            with mock.patch.dict(os.environ, {"EDITOR": "vim"}):
+                from lore.cli import _cmd_config_edit
+
+                rc = _cmd_config_edit(argparse.Namespace(global_=False))
+
+    assert rc == 1
+    assert "Invalid JSON" in capsys.readouterr().err
+
+
+def test_config_edit_not_in_lore(tmp_path, capsys):
+    bare_dir = tmp_path / "bare"
+    bare_dir.mkdir()
+
+    with mock.patch.object(Path, "cwd", return_value=bare_dir):
+        from lore.cli import _cmd_config_edit
+
+        rc = _cmd_config_edit(argparse.Namespace(global_=False))
+
+    assert rc == 1
+    assert "Not in a lore project" in capsys.readouterr().err
+
+
+def test_config_edit_creates_file_if_missing(tmp_path, capsys):
+    project_dir = tmp_path / "myproject"
+    lore_dir = project_dir / ".lore"
+    lore_dir.mkdir(parents=True)
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        with mock.patch("subprocess.run", return_value=mock.MagicMock(returncode=0)):
+            with mock.patch.dict(os.environ, {"EDITOR": "vi"}):
+                from lore.cli import _cmd_config_edit
+
+                rc = _cmd_config_edit(argparse.Namespace(global_=False))
+
+    assert rc == 0
+    assert (lore_dir / "config.json").exists()
+
+
+# =====================================================================
+# lore config (no subcommand)
+# =====================================================================
+
+
+def test_config_no_subcommand(capsys):
+    from lore.cli import _cmd_config
+
+    rc = _cmd_config(argparse.Namespace(config_command=None))
+    assert rc == 1
+    assert "Usage" in capsys.readouterr().err
+
+
+def test_main_config_show_exits_zero(tmp_path, capsys):
+    config_path().parent.mkdir(parents=True, exist_ok=True)
+    config_path().write_text('{"lore": {}}')
+
+    from lore.cli import main
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["config", "show", "--global"])
 
     assert exc_info.value.code == 0

@@ -310,6 +310,168 @@ def _cmd_conflicts(args: argparse.Namespace) -> int:
     return 0
 
 
+# =====================================================================
+# lore config
+# =====================================================================
+
+
+def _project_config_path() -> Path:
+    return Path.cwd() / ".lore" / "config.json"
+
+
+def _is_lore_project() -> bool:
+    return (Path.cwd() / ".lore").is_dir()
+
+
+def _load_json_file(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_json_file(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def _set_nested(data: dict, keys: list[str], value) -> None:
+    for key in keys[:-1]:
+        data = data.setdefault(key, {})
+    data[keys[-1]] = value
+
+
+def _parse_value(raw: str):
+    if raw.lower() == "true":
+        return True
+    if raw.lower() == "false":
+        return False
+    if raw.lower() == "null":
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    if raw.startswith(("[", "{")):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+    return raw
+
+
+def _cmd_config(args: argparse.Namespace) -> int:
+    sub = getattr(args, "config_command", None)
+    if sub == "show":
+        return _cmd_config_show(args)
+    elif sub == "set":
+        return _cmd_config_set(args)
+    elif sub == "edit":
+        return _cmd_config_edit(args)
+    else:
+        print("Usage: lore config {show|set|edit}", file=sys.stderr)
+        return 1
+
+
+def _cmd_config_show(args: argparse.Namespace) -> int:
+    from lore.config.loaders import _deep_merge
+    from lore.config.utils import config_path
+
+    use_global = getattr(args, "global_", False)
+    use_project = getattr(args, "project", False)
+
+    if use_project and not _is_lore_project():
+        print(
+            "Not in a lore project. Run 'lore init' first.", file=sys.stderr
+        )
+        return 1
+
+    global_data = _load_json_file(config_path())
+    project_data = _load_json_file(_project_config_path()) if _is_lore_project() else {}
+
+    if use_global:
+        data = global_data
+    elif use_project:
+        data = project_data
+    else:
+        data = _deep_merge(global_data, project_data)
+
+    print(json.dumps(data, indent=2))
+    return 0
+
+
+def _cmd_config_set(args: argparse.Namespace) -> int:
+    from lore.config.loaders import _clear_config_cache
+    from lore.config.utils import config_path
+
+    use_global = getattr(args, "global_", False)
+
+    if use_global:
+        path = config_path()
+    else:
+        if not _is_lore_project():
+            print(
+                "Not in a lore project. Run 'lore init' first, "
+                "or use --global.",
+                file=sys.stderr,
+            )
+            return 1
+        path = _project_config_path()
+
+    data = _load_json_file(path)
+    keys = args.key.split(".")
+    value = _parse_value(args.value)
+    _set_nested(data, keys, value)
+    _write_json_file(path, data)
+    _clear_config_cache()
+    print(f"Set {args.key} = {json.dumps(value)}")
+    return 0
+
+
+def _cmd_config_edit(args: argparse.Namespace) -> int:
+    import os
+    import subprocess
+
+    from lore.config.loaders import _clear_config_cache
+    from lore.config.utils import config_path
+
+    use_global = getattr(args, "global_", False)
+
+    if use_global:
+        path = config_path()
+    else:
+        if not _is_lore_project():
+            print(
+                "Not in a lore project. Run 'lore init' first, "
+                "or use --global.",
+                file=sys.stderr,
+            )
+            return 1
+        path = _project_config_path()
+
+    if not path.exists():
+        _write_json_file(path, {})
+
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
+    result = subprocess.run([editor, str(path)])
+    if result.returncode != 0:
+        print("Editor exited with error.", file=sys.stderr)
+        return 1
+
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(f"Invalid JSON after edit: {exc}", file=sys.stderr)
+        return 1
+
+    _clear_config_cache()
+    print(f"Config saved: {path}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="lore", description="Lore knowledge server")
     sub = parser.add_subparsers(dest="command")
@@ -327,6 +489,31 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("conflicts", help="Show conflict report")
 
+    config_parser = sub.add_parser("config", help="View and edit configuration")
+    config_sub = config_parser.add_subparsers(dest="config_command")
+
+    show_parser = config_sub.add_parser("show", help="Display configuration")
+    show_parser.add_argument(
+        "--global", dest="global_", action="store_true", help="Show global config only"
+    )
+    show_parser.add_argument(
+        "--project", action="store_true", help="Show project config only"
+    )
+
+    set_parser = config_sub.add_parser("set", help="Set a config value")
+    set_parser.add_argument("key", help="Dot-notation key (e.g. lore.store.path)")
+    set_parser.add_argument("value", help="Value to set")
+    set_parser.add_argument(
+        "--global", dest="global_", action="store_true", help="Set in global config"
+    )
+
+    edit_parser = config_sub.add_parser(
+        "edit", help="Open config in editor"
+    )
+    edit_parser.add_argument(
+        "--global", dest="global_", action="store_true", help="Edit global config"
+    )
+
     args = parser.parse_args(argv)
 
     handlers = {
@@ -335,6 +522,7 @@ def main(argv: list[str] | None = None) -> None:
         "sync": _cmd_sync,
         "search": _cmd_search,
         "conflicts": _cmd_conflicts,
+        "config": _cmd_config,
     }
 
     handler = handlers.get(args.command)
