@@ -170,19 +170,56 @@ def test_synthesized_null_when_llm_none(tools, store, monkeypatch):
     assert result["synthesized"] is None
 
 
-def test_synthesized_placeholder_when_llm_configured(tools, store, monkeypatch):
+def test_synthesized_when_llm_configured(tools, store, monkeypatch):
     store.store(_make_entry(key="k1", value="some content"))
 
     import lore.mcp.server as srv
     from lore.config.models import GlobalConfig, LLMConfig
+    from lore.llm.none import NoneProvider
 
-    cfg = GlobalConfig(llm=LLMConfig(provider="openai", model="gpt-4o-mini"))
+    cfg = GlobalConfig(llm=LLMConfig(provider="ollama", model="phi4-mini"))
     monkeypatch.setattr(srv, "get_global_config", lambda: cfg)
+    monkeypatch.setattr(srv, "_get_llm_provider", lambda: NoneProvider())
 
     result = tools["query_knowledge"](topic="content")
-    # synthesis not yet wired, returns None as placeholder
+    assert result["synthesized"] is not None
+    assert "[k1]" in result["synthesized"]
+    assert len(result["results"]) >= 1
+
+
+def test_synthesized_none_on_provider_error(tools, store, monkeypatch):
+    store.store(_make_entry(key="k1", value="some content"))
+
+    import lore.mcp.server as srv
+    from lore.config.models import GlobalConfig, LLMConfig
+    from lore.llm.base import LLMProvider
+
+    class _FailProvider(LLMProvider):
+        def synthesize(self, topic, candidates):
+            raise RuntimeError("LLM down")
+
+        def extract_knowledge(self, transcript, existing):
+            return []
+
+    cfg = GlobalConfig(llm=LLMConfig(provider="ollama"))
+    monkeypatch.setattr(srv, "get_global_config", lambda: cfg)
+    monkeypatch.setattr(srv, "_get_llm_provider", lambda: _FailProvider())
+
+    result = tools["query_knowledge"](topic="content")
     assert result["synthesized"] is None
     assert len(result["results"]) >= 1
+
+
+def test_synthesized_none_when_llm_configured_but_no_results(tools, store, monkeypatch):
+    import lore.mcp.server as srv
+    from lore.config.models import GlobalConfig, LLMConfig
+
+    cfg = GlobalConfig(llm=LLMConfig(provider="ollama"))
+    monkeypatch.setattr(srv, "get_global_config", lambda: cfg)
+
+    result = tools["query_knowledge"](topic="nonexistent_topic_xyz")
+    assert result["synthesized"] is None
+    assert result["results"] == []
 
 
 # =====================================================================

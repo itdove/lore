@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import importlib.resources
+import logging
 import re
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 from lore.config.manager import get_global_config, get_project_config
+from lore.llm import LLMProvider
+from lore.llm import get_llm_provider as _create_llm_provider
 from lore.store import get_store as _create_store
 from lore.store.base import KnowledgeEntry
 from lore.store.priority import resolve_priority
 from lore.store.sqlite import SQLiteStore
+
+logger = logging.getLogger(__name__)
 
 
 def _load_lore_instructions() -> str:
@@ -21,6 +26,7 @@ def _load_lore_instructions() -> str:
 
 
 _store_instance: SQLiteStore | None = None
+_llm_instance: LLMProvider | None = None
 
 
 def _get_store() -> SQLiteStore:
@@ -29,6 +35,14 @@ def _get_store() -> SQLiteStore:
         return _store_instance
     _store_instance = _create_store()
     return _store_instance
+
+
+def _get_llm_provider() -> LLMProvider:
+    global _llm_instance
+    if _llm_instance is not None:
+        return _llm_instance
+    _llm_instance = _create_llm_provider()
+    return _llm_instance
 
 
 def _entry_to_dict(entry: KnowledgeEntry) -> dict:
@@ -96,9 +110,13 @@ def create_server() -> FastMCP:
 
         synthesized = None
         cfg = get_global_config()
-        if cfg.llm.provider != "none" and results:
-            # LLM synthesis placeholder — will be wired in a future issue
-            pass
+        if cfg.llm.provider != "none" and resolved:
+            try:
+                synthesized = _get_llm_provider().synthesize(topic, resolved)
+            except Exception:
+                logger.warning(
+                    "LLM synthesis failed for topic %r", topic, exc_info=True
+                )
 
         return {"results": results, "synthesized": synthesized}
 
