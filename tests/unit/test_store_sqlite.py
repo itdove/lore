@@ -868,58 +868,6 @@ def test_health_negated_count(store):
     assert health["negated_count"] == 1
 
 
-def test_migrate_backfills_negated_prefix(tmp_path):
-    db_file = str(tmp_path / "migrate.db")
-    conn = sqlite3.connect(db_file)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS knowledge (
-            id TEXT PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL,
-            tags TEXT, level INTEGER NOT NULL, level_name TEXT,
-            locked BOOLEAN DEFAULT FALSE, conflict_with TEXT,
-            conflict_status TEXT, repo_url TEXT, repo_branch TEXT,
-            ingested_from TEXT, provenance TEXT, times_seen INTEGER DEFAULT 1,
-            projects TEXT, embedding BLOB,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
-            key, value, tags, content=knowledge, content_rowid=rowid
-        );
-        CREATE TRIGGER IF NOT EXISTS knowledge_ai AFTER INSERT ON knowledge BEGIN
-            INSERT INTO knowledge_fts(rowid, key, value, tags)
-            VALUES (new.rowid, new.key, new.value, new.tags);
-        END;
-        CREATE TRIGGER IF NOT EXISTS knowledge_au AFTER UPDATE ON knowledge BEGIN
-            INSERT INTO knowledge_fts(knowledge_fts, rowid, key, value, tags)
-            VALUES ('delete', old.rowid, old.key, old.value, old.tags);
-            INSERT INTO knowledge_fts(rowid, key, value, tags)
-            VALUES (new.rowid, new.key, new.value, new.tags);
-        END;
-        CREATE TRIGGER IF NOT EXISTS knowledge_ad AFTER DELETE ON knowledge BEGIN
-            INSERT INTO knowledge_fts(knowledge_fts, rowid, key, value, tags)
-            VALUES ('delete', old.rowid, old.key, old.value, old.tags);
-        END;
-        CREATE TABLE IF NOT EXISTS knowledge_history (
-            id TEXT PRIMARY KEY, knowledge_id TEXT, action TEXT,
-            previous_value TEXT, actor TEXT, reason TEXT,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        """)
-    conn.execute(
-        "INSERT INTO knowledge (id, key, value, level) VALUES (?, ?, ?, ?)",
-        ("id1", "k1", "[NEGATED] bad data\n\nPrevious value: original content", 0),
-    )
-    conn.commit()
-    conn.close()
-
-    conn = create_schema(db_file)
-    s = SQLiteStore(conn)
-    entry = s.get("k1")
-    assert entry.negated == "bad data"
-    assert entry.value == "original content"
-
-
 # --- Hybrid search ---
 
 

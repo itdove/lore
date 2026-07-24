@@ -43,7 +43,7 @@ def test_get_global_config_partial_overrides(tmp_path):
                     "lore": {
                         "projects": ["/home/dev/proj-a"],
                         "llm": {"provider": "ollama", "model": "phi4-mini"},
-                        "sync_interval": "5m",
+                        "sync": {"staleness_threshold_minutes": 5},
                     }
                 }
             )
@@ -213,43 +213,6 @@ def test_get_global_config_sync_object(tmp_path):
         assert gc.sync.auto_sync is False
         assert gc.sync.staleness_threshold_minutes == 15
         assert gc.sync.on_session_start is False
-
-
-def test_migrate_sync_interval_minutes(tmp_path):
-    with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(tmp_path)}):
-        _clear_config_cache()
-        cfg = tmp_path / "config.json"
-        cfg.write_text(json.dumps({"lore": {"sync_interval": "45m"}}))
-        gc = get_global_config()
-        assert gc.sync.staleness_threshold_minutes == 45
-        assert gc.sync.auto_sync is True
-
-
-def test_migrate_sync_interval_hours(tmp_path):
-    with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(tmp_path)}):
-        _clear_config_cache()
-        cfg = tmp_path / "config.json"
-        cfg.write_text(json.dumps({"lore": {"sync_interval": "2h"}}))
-        gc = get_global_config()
-        assert gc.sync.staleness_threshold_minutes == 120
-
-
-def test_sync_object_takes_precedence_over_interval(tmp_path):
-    with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(tmp_path)}):
-        _clear_config_cache()
-        cfg = tmp_path / "config.json"
-        cfg.write_text(
-            json.dumps(
-                {
-                    "lore": {
-                        "sync_interval": "5m",
-                        "sync": {"staleness_threshold_minutes": 99},
-                    }
-                }
-            )
-        )
-        gc = get_global_config()
-        assert gc.sync.staleness_threshold_minutes == 99
 
 
 def test_projects_array_readable(tmp_path):

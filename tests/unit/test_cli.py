@@ -738,44 +738,6 @@ def test_init_hooks_merges_existing(tmp_path):
     assert _has_hook_command(data["hooks"]["UserPromptSubmit"], "lore hook recall")
 
 
-def test_init_hooks_migrates_old_format(tmp_path):
-    project_dir = tmp_path / "myproject"
-    claude_dir = project_dir / ".claude"
-    claude_dir.mkdir(parents=True)
-    (claude_dir / "settings.json").write_text(
-        json.dumps(
-            {
-                "hooks": {
-                    "UserPromptSubmit": [
-                        {"type": "command", "command": "lore hook recall"}
-                    ],
-                    "PostToolUse": [{"type": "command", "command": "lore hook nudge"}],
-                    "Stop": [{"type": "command", "command": "lore hook capture"}],
-                }
-            }
-        )
-    )
-
-    with mock.patch.object(Path, "cwd", return_value=project_dir):
-        from lore.cli import _register_hooks
-
-        _register_hooks()
-
-    data = json.loads((claude_dir / "settings.json").read_text())
-    hooks = data["hooks"]
-    assert "Stop" not in hooks
-    assert "SessionEnd" in hooks
-    assert len(hooks["UserPromptSubmit"]) == 1
-    assert len(hooks["PostToolUse"]) == 1
-    assert len(hooks["SessionEnd"]) == 1
-    assert _has_hook_command(hooks["UserPromptSubmit"], "lore hook recall")
-    assert _has_hook_command(hooks["SessionEnd"], "lore hook capture")
-    for event in hooks:
-        for matcher_entry in hooks[event]:
-            assert "matcher" in matcher_entry
-            assert "hooks" in matcher_entry
-
-
 # =====================================================================
 # MCP server trust + tool permissions
 # =====================================================================

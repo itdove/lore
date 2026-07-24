@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -12,8 +11,6 @@ from lore.store.base import HistoryRecord, KnowledgeEntry, StoreBackend
 log = logging.getLogger("lore.store")
 
 _RRF_K = 60
-
-_NEGATED_RE = re.compile(r"^\[NEGATED\]\s*(.*?)\n\nPrevious value:\s*(.*)", re.DOTALL)
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS knowledge (
@@ -104,31 +101,7 @@ def create_schema(
             conn.execute("PRAGMA journal_mode=WAL")
 
     conn.executescript(_SCHEMA_SQL)
-    _migrate_schema(conn)
     return conn
-
-
-def _migrate_schema(conn: sqlite3.Connection) -> None:
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(knowledge)").fetchall()}
-    if "negated" in cols:
-        return
-
-    conn.execute("ALTER TABLE knowledge ADD COLUMN negated TEXT")
-
-    rows = conn.execute(
-        "SELECT id, value FROM knowledge WHERE value LIKE '[NEGATED]%'"
-    ).fetchall()
-    for row in rows:
-        m = _NEGATED_RE.match(row[1])
-        if m:
-            reason, original = m.group(1), m.group(2)
-        else:
-            reason, original = "Migrated (reason in value)", row[1]
-        conn.execute(
-            "UPDATE knowledge SET negated = ?, value = ? WHERE id = ?",
-            (reason, original, row[0]),
-        )
-    conn.commit()
 
 
 class SQLiteStore(StoreBackend):
