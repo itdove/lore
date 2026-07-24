@@ -384,9 +384,7 @@ def _cmd_config_show(args: argparse.Namespace) -> int:
     use_project = getattr(args, "project", False)
 
     if use_project and not _is_lore_project():
-        print(
-            "Not in a lore project. Run 'lore init' first.", file=sys.stderr
-        )
+        print("Not in a lore project. Run 'lore init' first.", file=sys.stderr)
         return 1
 
     global_data = _load_json_file(config_path())
@@ -414,8 +412,7 @@ def _cmd_config_set(args: argparse.Namespace) -> int:
     else:
         if not _is_lore_project():
             print(
-                "Not in a lore project. Run 'lore init' first, "
-                "or use --global.",
+                "Not in a lore project. Run 'lore init' first, " "or use --global.",
                 file=sys.stderr,
             )
             return 1
@@ -445,8 +442,7 @@ def _cmd_config_edit(args: argparse.Namespace) -> int:
     else:
         if not _is_lore_project():
             print(
-                "Not in a lore project. Run 'lore init' first, "
-                "or use --global.",
+                "Not in a lore project. Run 'lore init' first, " "or use --global.",
                 file=sys.stderr,
             )
             return 1
@@ -507,9 +503,7 @@ def main(argv: list[str] | None = None) -> None:
         "--global", dest="global_", action="store_true", help="Set in global config"
     )
 
-    edit_parser = config_sub.add_parser(
-        "edit", help="Open config in editor"
-    )
+    edit_parser = config_sub.add_parser("edit", help="Open config in editor")
     edit_parser.add_argument(
         "--global", dest="global_", action="store_true", help="Edit global config"
     )

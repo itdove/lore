@@ -376,7 +376,9 @@ def test_config_show_merged(tmp_path, capsys):
     config_path().parent.mkdir(parents=True, exist_ok=True)
     config_path().write_text(json.dumps(global_data))
 
-    project_data = {"lore": {"hierarchy": [{"level": 1, "repo": "https://x.git", "branch": "main"}]}}
+    project_data = {
+        "lore": {"hierarchy": [{"level": 1, "repo": "https://x.git", "branch": "main"}]}
+    }
     (lore_dir / "config.json").write_text(json.dumps(project_data))
 
     with mock.patch.object(Path, "cwd", return_value=project_dir):
@@ -452,7 +454,11 @@ def test_config_set_project(tmp_path, capsys):
         from lore.cli import _cmd_config_set
 
         rc = _cmd_config_set(
-            argparse.Namespace(key="lore.store.path", value="/tmp/db.sqlite", global_=False)
+            argparse.Namespace(
+                key="lore.store.path",
+                value="/tmp/db.sqlite",
+                global_=False,
+            )
         )
 
     assert rc == 0
@@ -503,9 +509,7 @@ def test_config_set_not_in_lore(tmp_path, capsys):
     with mock.patch.object(Path, "cwd", return_value=bare_dir):
         from lore.cli import _cmd_config_set
 
-        rc = _cmd_config_set(
-            argparse.Namespace(key="lore.x", value="y", global_=False)
-        )
+        rc = _cmd_config_set(argparse.Namespace(key="lore.x", value="y", global_=False))
 
     assert rc == 1
     assert "Not in a lore project" in capsys.readouterr().err
@@ -523,21 +527,24 @@ def test_config_edit_opens_editor(tmp_path, capsys):
     (lore_dir / "config.json").write_text('{"lore": {}}')
 
     with mock.patch.object(Path, "cwd", return_value=project_dir):
-        with mock.patch("subprocess.run", return_value=mock.MagicMock(returncode=0)) as mock_run:
+        mock_ret = mock.MagicMock(returncode=0)
+        with mock.patch("subprocess.run", return_value=mock_ret) as mock_run:
             with mock.patch.dict(os.environ, {"EDITOR": "nano"}):
                 from lore.cli import _cmd_config_edit
 
                 rc = _cmd_config_edit(argparse.Namespace(global_=False))
 
     assert rc == 0
-    mock_run.assert_called_once_with(["nano", str(lore_dir / "config.json")])
+    cfg = str(lore_dir / "config.json")
+    mock_run.assert_called_once_with(["nano", cfg])
 
 
 def test_config_edit_global(tmp_path, capsys):
     config_path().parent.mkdir(parents=True, exist_ok=True)
     config_path().write_text("{}")
 
-    with mock.patch("subprocess.run", return_value=mock.MagicMock(returncode=0)) as mock_run:
+    mock_ret = mock.MagicMock(returncode=0)
+    with mock.patch("subprocess.run", return_value=mock_ret) as mock_run:
         with mock.patch.dict(os.environ, {"VISUAL": "code"}):
             from lore.cli import _cmd_config_edit
 
