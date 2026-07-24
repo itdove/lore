@@ -13,6 +13,7 @@ class _BrowserFilters:
     level: int | None = None
     tag: str = ""
     search: str = ""
+    show_negated: bool = False
 
 
 def render_browser() -> None:
@@ -25,7 +26,7 @@ def render_browser() -> None:
     def refresh_table():
         table_container.clear()
         with table_container:
-            _build_table(store, filters.level, filters.tag, filters.search)
+            _build_table(store, filters)
 
     def _set_filter(attr: str):
         def handler(e):
@@ -52,31 +53,51 @@ def render_browser() -> None:
             on_change=_set_filter("search"),
         ).props("clearable dense")
 
+        ui.switch(
+            "Show negated",
+            value=False,
+            on_change=_set_filter("show_negated"),
+        ).props("dense")
+
         ui.button("Refresh", icon="refresh", on_click=refresh_table).props("flat")
 
     refresh_table()
 
 
 def _get_level_options(store) -> dict:
-    options = {None: "All Levels"}
-    health = store.health()
-    for level in sorted(health["entries_by_level"].keys()):
-        lvl = int(level)
-        label = f"{format_level_label(lvl)} ({lvl})"
-        options[lvl] = label
+    from lore.config.manager import get_project_config
+
+    options: dict = {None: "All Levels", 0: "Individual (0)"}
+
+    try:
+        cfg = get_project_config()
+        for h in cfg.hierarchy:
+            name = h.name or f"Level {h.level}"
+            options[h.level] = f"{name} ({h.level})"
+    except Exception:
+        health = store.health()
+        for level in sorted(health["entries_by_level"].keys()):
+            lvl = int(level)
+            if lvl not in options:
+                options[lvl] = f"Level {lvl} ({lvl})"
+
     return options
 
 
-def _build_table(store, level, tag, search_query) -> None:
-    if search_query and search_query.strip():
-        filter_levels = [level] if level is not None else None
+def _build_table(store, filters: _BrowserFilters) -> None:
+    if filters.search and filters.search.strip():
+        filter_levels = [filters.level] if filters.level is not None else None
         entries = store.query_fts(
-            search_query.strip(), limit=100, filter_levels=filter_levels
+            filters.search.strip(),
+            limit=100,
+            filter_levels=filter_levels,
+            include_negated=filters.show_negated,
         )
     else:
         entries = store.list_entries(
-            tag=tag if tag else None,
-            level=level,
+            tag=filters.tag if filters.tag else None,
+            level=filters.level,
+            include_negated=filters.show_negated,
         )
 
     if not entries:
@@ -91,6 +112,7 @@ def _build_table(store, level, tag, search_query) -> None:
             "align": "left",
             "sortable": True,
         },
+        {"name": "status", "label": "", "field": "negated", "align": "left"},
         {"name": "level", "label": "Level", "field": "level_display", "align": "left"},
         {"name": "tags", "label": "Tags", "field": "tags", "align": "left"},
         {"name": "value", "label": "Value", "field": "value_snippet", "align": "left"},
@@ -116,6 +138,7 @@ def _build_table(store, level, tag, search_query) -> None:
                 "tags": entry.tags or "",
                 "value_snippet": snippet,
                 "updated_at": entry.updated_at or "",
+                "negated": entry.negated or "",
             }
         )
 
@@ -134,6 +157,30 @@ def _build_table(store, level, tag, search_query) -> None:
                @click="$parent.$emit('view', props.row)">
                 {{ props.row.key }}
             </a>
+        </q-td>
+        """,
+    )
+
+    table.add_slot(
+        "body-cell-status",
+        r"""
+        <q-td :props="props">
+            <q-badge v-if="props.row.negated"
+                     color="deep-purple" text-color="white"
+                     label="NEGATED" />
+        </q-td>
+        """,
+    )
+
+    table.add_slot(
+        "body-cell-value",
+        r"""
+        <q-td :props="props">
+            <span v-if="props.row.negated"
+                  class="text-strike text-grey">
+                {{ props.row.value_snippet }}
+            </span>
+            <span v-else>{{ props.row.value_snippet }}</span>
         </q-td>
         """,
     )

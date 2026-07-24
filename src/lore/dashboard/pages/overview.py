@@ -27,6 +27,13 @@ def render_overview() -> None:
             "schedule",
             color="warning" if health["stale_count"] > 0 else "grey",
         )
+        negated = health["negated_count"]
+        _stat_card(
+            "Negated",
+            str(negated),
+            "block",
+            color="deep-purple" if negated > 0 else "grey",
+        )
 
     ui.label("Entries by Level").classes("text-subtitle1 q-mt-lg q-mb-sm")
     with ui.row().classes("q-gutter-md"):

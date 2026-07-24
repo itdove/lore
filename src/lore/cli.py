@@ -6,6 +6,8 @@ import shutil
 import sys
 from pathlib import Path
 
+_RECALL_PREAMBLE = "IMPORTANT: The following team knowledge is relevant to this prompt."
+
 
 def _ensure_dirs() -> None:
     from lore.config.utils import cache_dir, config_dir, data_dir, state_dir
@@ -651,7 +653,10 @@ def _cmd_hook_recall(args: argparse.Namespace) -> int:
         resolved = resolve_priority(raw)
 
         if resolved:
-            lines = ["<lore-context>"]
+            lines = [
+                "<lore-context>",
+                _RECALL_PREAMBLE,
+            ]
             for entry in resolved:
                 level_label = entry.level_name or f"L{entry.level}"
                 lines.append(f"[{level_label}] {entry.key}: {entry.value}")

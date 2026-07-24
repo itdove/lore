@@ -38,6 +38,7 @@ class KnowledgeEntry:
     locked: bool = False
     conflict_with: str | None = None
     conflict_status: str | None = None
+    negated: str | None = None
     repo_url: str | None = None
     repo_branch: str | None = None
     ingested_from: str | None = None
@@ -64,6 +65,7 @@ class StoreBackend(ABC):
         limit: int = 10,
         filter_levels: list[int] | None = None,
         filter_repos: list[tuple[str, str]] | None = None,
+        include_negated: bool = False,
     ) -> list[KnowledgeEntry]: ...
 
     @abstractmethod
@@ -85,13 +87,21 @@ class StoreBackend(ABC):
     ) -> None: ...
 
     @abstractmethod
+    def negate(
+        self, key: str, reason: str, *, actor: str = "mcp", level: int | None = None
+    ) -> None: ...
+
+    @abstractmethod
     def delete(
         self, key: str, reason: str, actor: str, *, level: int | None = None
     ) -> None: ...
 
     @abstractmethod
     def list_entries(
-        self, tag: str | None = None, level: int | None = None
+        self,
+        tag: str | None = None,
+        level: int | None = None,
+        include_negated: bool = False,
     ) -> list[KnowledgeEntry]: ...
 
     @abstractmethod

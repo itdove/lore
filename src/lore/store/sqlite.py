@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
 
 from lore.store.base import HistoryRecord, KnowledgeEntry, StoreBackend
+
+_NEGATED_RE = re.compile(r"^\[NEGATED\]\s*(.*?)\n\nPrevious value:\s*(.*)", re.DOTALL)
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS knowledge (
@@ -17,6 +20,7 @@ CREATE TABLE IF NOT EXISTS knowledge (
     locked           BOOLEAN DEFAULT FALSE,
     conflict_with    TEXT,
     conflict_status  TEXT,
+    negated          TEXT,
     repo_url         TEXT,
     repo_branch      TEXT,
     ingested_from    TEXT,
@@ -70,6 +74,7 @@ _KNOWLEDGE_COLUMNS = [
     "locked",
     "conflict_with",
     "conflict_status",
+    "negated",
     "repo_url",
     "repo_branch",
     "ingested_from",
@@ -93,7 +98,31 @@ def create_schema(
             conn.execute("PRAGMA journal_mode=WAL")
 
     conn.executescript(_SCHEMA_SQL)
+    _migrate_schema(conn)
     return conn
+
+
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(knowledge)").fetchall()}
+    if "negated" in cols:
+        return
+
+    conn.execute("ALTER TABLE knowledge ADD COLUMN negated TEXT")
+
+    rows = conn.execute(
+        "SELECT id, value FROM knowledge WHERE value LIKE '[NEGATED]%'"
+    ).fetchall()
+    for row in rows:
+        m = _NEGATED_RE.match(row[1])
+        if m:
+            reason, original = m.group(1), m.group(2)
+        else:
+            reason, original = "Migrated (reason in value)", row[1]
+        conn.execute(
+            "UPDATE knowledge SET negated = ?, value = ? WHERE id = ?",
+            (reason, original, row[0]),
+        )
+    conn.commit()
 
 
 class SQLiteStore(StoreBackend):
@@ -141,6 +170,7 @@ class SQLiteStore(StoreBackend):
                 entry.locked,
                 entry.conflict_with,
                 entry.conflict_status,
+                entry.negated,
                 entry.repo_url,
                 entry.repo_branch,
                 entry.ingested_from,
@@ -170,11 +200,14 @@ class SQLiteStore(StoreBackend):
         limit: int = 10,
         filter_levels: list[int] | None = None,
         filter_repos: list[tuple[str, str]] | None = None,
+        include_negated: bool = False,
     ) -> list[KnowledgeEntry]:
         conditions = [
             "knowledge_fts MATCH ?",
             "(k.conflict_with IS NULL OR k.conflict_status = 'active')",
         ]
+        if not include_negated:
+            conditions.append("k.negated IS NULL")
         params: list = [topic]
 
         if filter_levels is not None:
@@ -255,7 +288,7 @@ class SQLiteStore(StoreBackend):
             raise KeyError(key)
 
         now = datetime.now(timezone.utc).isoformat()
-        set_parts = ["value = ?"]
+        set_parts = ["value = ?", "negated = NULL"]
         params: list = [value]
         if tags is not None:
             set_parts.append("tags = ?")
@@ -273,6 +306,32 @@ class SQLiteStore(StoreBackend):
             previous_value=row["value"],
             actor=actor,
             reason=reason,
+        )
+        self._conn.commit()
+
+    def negate(
+        self, key: str, reason: str, *, actor: str = "mcp", level: int | None = None
+    ) -> None:
+        where, where_params = self._key_where(key, level)
+        row = self._conn.execute(
+            f"SELECT id, negated, locked FROM knowledge {where}", where_params
+        ).fetchone()
+        if row is None:
+            raise KeyError(key)
+        if row["locked"]:
+            raise ValueError(f"Cannot negate locked entry '{key}'")
+
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            f"UPDATE knowledge SET negated = ?, updated_at = ? {where}",
+            [reason, now, *where_params],
+        )
+        self._log_history(
+            row["id"],
+            "negated",
+            actor=actor,
+            reason=reason,
+            previous_value=row["negated"],
         )
         self._conn.commit()
 
@@ -414,10 +473,16 @@ class SQLiteStore(StoreBackend):
         )
 
     def list_entries(
-        self, tag: str | None = None, level: int | None = None
+        self,
+        tag: str | None = None,
+        level: int | None = None,
+        include_negated: bool = False,
     ) -> list[KnowledgeEntry]:
         conditions = []
         params: list = []
+
+        if not include_negated:
+            conditions.append("negated IS NULL")
 
         if tag is not None:
             escaped = tag.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -525,6 +590,7 @@ class SQLiteStore(StoreBackend):
             "COUNT(CASE WHEN conflict_with IS NOT NULL THEN 1 END) AS conflicts, "
             "COUNT(CASE WHEN updated_at < datetime('now', '-90 days') "
             "THEN 1 END) AS stale, "
+            "COUNT(CASE WHEN negated IS NOT NULL THEN 1 END) AS negated, "
             "MIN(updated_at) AS oldest, "
             "MAX(updated_at) AS newest "
             "FROM knowledge"
@@ -538,7 +604,8 @@ class SQLiteStore(StoreBackend):
             "total_entries": row[0],
             "entries_by_level": {r[0]: r[1] for r in level_rows},
             "conflict_count": row[1],
-            "oldest_entry": row[3],
-            "newest_entry": row[4],
             "stale_count": row[2],
+            "negated_count": row[3],
+            "oldest_entry": row[4],
+            "newest_entry": row[5],
         }

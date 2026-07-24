@@ -133,10 +133,10 @@ See issue #2 and `DEVELOPMENT_PLAN.md` for full config specification.
 
 ### Linting
 
-The project uses black and ruff enforced by CI. **MANDATORY: Run both linters after every code change, not just at the end.**
+The project uses black and ruff enforced by CI. Run the format cycle **once before running tests**, not after every individual step.
 
 ```bash
-# Full lint cycle (run after every implementation step):
+# Full lint cycle (run once before pytest):
 black src/lore/ tests/ && ruff check src/lore/ tests/ --fix && black src/lore/ tests/
 
 # Verify all checks pass:

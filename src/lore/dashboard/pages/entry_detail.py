@@ -27,6 +27,14 @@ def show_entry_detail(store, entry_id: str) -> None:
         if entry.locked:
             ui.badge("LOCKED", color="warning").classes("q-mb-sm")
 
+        if entry.negated:
+            ui.badge("NEGATED", color="deep-purple").classes("q-mb-sm")
+            with ui.card().classes("q-pa-sm bg-deep-purple-1 q-mb-md w-full"):
+                ui.label("Negation Reason:").classes(
+                    "text-weight-bold text-deep-purple"
+                )
+                ui.label(entry.negated).classes("text-body2")
+
         if entry.tags:
             with ui.row().classes("q-gutter-xs q-mb-md"):
                 for tag in entry.tags.split(","):
@@ -35,7 +43,13 @@ def show_entry_detail(store, entry_id: str) -> None:
                         ui.badge(tag, color="grey").props("outline")
 
         ui.separator()
-        ui.markdown(entry.value).classes("q-my-md").props("no-html")
+        if entry.negated:
+            ui.label("Original Value (negated):").classes(
+                "text-caption text-grey q-mb-xs"
+            )
+            ui.markdown(entry.value).classes("q-my-md text-strike").props("no-html")
+        else:
+            ui.markdown(entry.value).classes("q-my-md").props("no-html")
         ui.separator()
 
         if entry.level > 0:

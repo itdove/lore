@@ -530,7 +530,7 @@ def test_store_knowledge_history_logged(tools, store):
 # =====================================================================
 
 
-def test_negate_knowledge_preserves_reason(tools, store):
+def test_negate_knowledge_sets_column(tools, store):
     store.store(_make_entry(key="fact:db:engine", value="PostgreSQL is fastest"))
 
     result = tools["negate_knowledge"](
@@ -541,9 +541,8 @@ def test_negate_knowledge_preserves_reason(tools, store):
     assert result["pr_url"] is None
 
     entry = store.get("fact:db:engine")
-    assert "[NEGATED]" in entry.value
-    assert "Benchmarks were flawed" in entry.value
-    assert "PostgreSQL is fastest" in entry.value
+    assert entry.negated == "Benchmarks were flawed"
+    assert entry.value == "PostgreSQL is fastest"
 
 
 def test_negate_knowledge_history(tools, store):
@@ -551,8 +550,29 @@ def test_negate_knowledge_history(tools, store):
     tools["negate_knowledge"](key="fact:api:rate", reason="Limit was raised")
 
     history = store.get_history(entry_id)
-    updated = [h for h in history if h.action == "updated"]
-    assert any(h.previous_value == "100 req/s" for h in updated)
+    negated = [h for h in history if h.action == "negated"]
+    assert len(negated) == 1
+    assert negated[0].reason == "Limit was raised"
+
+
+def test_query_knowledge_excludes_negated(tools, store):
+    store.store(_make_entry(key="k1", value="search topic alpha", negated="outdated"))
+    store.store(_make_entry(key="k2", value="search topic alpha"))
+
+    result = tools["query_knowledge"](topic="search topic alpha")
+    keys = [r["key"] for r in result["results"]]
+    assert "k2" in keys
+    assert "k1" not in keys
+
+
+def test_list_knowledge_excludes_negated(tools, store):
+    store.store(_make_entry(key="k1", value="val1", negated="old"))
+    store.store(_make_entry(key="k2", value="val2"))
+
+    result = tools["list_knowledge"]()
+    keys = [e["key"] for e in result["entries"]]
+    assert "k2" in keys
+    assert "k1" not in keys
 
 
 def test_negate_knowledge_missing_key(tools, store):
