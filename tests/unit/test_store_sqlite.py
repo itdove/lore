@@ -781,3 +781,140 @@ def test_clear_conflict_noop_when_no_conflict(store):
     store.clear_conflict(e_id)
     entry = store.get_by_id(e_id)
     assert entry.conflict_with is None
+
+
+# --- Negation ---
+
+
+def test_knowledge_entry_negated_default_none():
+    entry = KnowledgeEntry(key="k", value="v", level=0)
+    assert entry.negated is None
+
+
+def test_knowledge_entry_negated_field():
+    entry = KnowledgeEntry(key="k", value="v", level=0, negated="outdated")
+    assert entry.negated == "outdated"
+
+
+def test_schema_has_negated_column(store):
+    cols = {
+        row[1] for row in store._conn.execute("PRAGMA table_info(knowledge)").fetchall()
+    }
+    assert "negated" in cols
+
+
+def test_negate_sets_column(store):
+    store.store(_make_entry(key="k1", value="original"))
+    store.negate("k1", "outdated")
+    entry = store.get("k1")
+    assert entry.negated == "outdated"
+    assert entry.value == "original"
+
+
+def test_negate_logs_history(store):
+    entry_id = store.store(_make_entry(key="k1", value="val"))
+    store.negate("k1", "wrong")
+    history = store.get_history(entry_id)
+    assert any(h.action == "negated" for h in history)
+
+
+def test_negate_missing_key_raises(store):
+    with pytest.raises(KeyError):
+        store.negate("missing:key:here", "reason")
+
+
+def test_query_fts_excludes_negated(store):
+    store.store(_make_entry(key="k1", value="search term", negated="reason"))
+    store.store(_make_entry(key="k2", value="search term"))
+    results = store.query_fts("search term", include_negated=False)
+    assert len(results) == 1
+    assert results[0].key == "k2"
+
+
+def test_query_fts_includes_negated_when_requested(store):
+    store.store(_make_entry(key="k1", value="search term", negated="reason"))
+    results = store.query_fts("search term", include_negated=True)
+    assert len(results) == 1
+    assert results[0].negated == "reason"
+
+
+def test_list_entries_excludes_negated(store):
+    store.store(_make_entry(key="k1", value="v1", negated="old"))
+    store.store(_make_entry(key="k2", value="v2"))
+    entries = store.list_entries(include_negated=False)
+    assert len(entries) == 1
+    assert entries[0].key == "k2"
+
+
+def test_list_entries_excludes_negated_by_default(store):
+    store.store(_make_entry(key="k1", value="v1", negated="old"))
+    store.store(_make_entry(key="k2", value="v2"))
+    entries = store.list_entries()
+    assert len(entries) == 1
+    assert entries[0].key == "k2"
+
+
+def test_list_entries_includes_negated_when_requested(store):
+    store.store(_make_entry(key="k1", value="v1", negated="old"))
+    store.store(_make_entry(key="k2", value="v2"))
+    entries = store.list_entries(include_negated=True)
+    assert len(entries) == 2
+
+
+def test_health_negated_count(store):
+    store.store(_make_entry(key="k1", value="v1", negated="old"))
+    store.store(_make_entry(key="k2", value="v2"))
+    health = store.health()
+    assert health["negated_count"] == 1
+
+
+def test_migrate_backfills_negated_prefix(tmp_path):
+    db_file = str(tmp_path / "migrate.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS knowledge (
+            id TEXT PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL,
+            tags TEXT, level INTEGER NOT NULL, level_name TEXT,
+            locked BOOLEAN DEFAULT FALSE, conflict_with TEXT,
+            conflict_status TEXT, repo_url TEXT, repo_branch TEXT,
+            ingested_from TEXT, provenance TEXT, times_seen INTEGER DEFAULT 1,
+            projects TEXT, embedding BLOB,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
+            key, value, tags, content=knowledge, content_rowid=rowid
+        );
+        CREATE TRIGGER IF NOT EXISTS knowledge_ai AFTER INSERT ON knowledge BEGIN
+            INSERT INTO knowledge_fts(rowid, key, value, tags)
+            VALUES (new.rowid, new.key, new.value, new.tags);
+        END;
+        CREATE TRIGGER IF NOT EXISTS knowledge_au AFTER UPDATE ON knowledge BEGIN
+            INSERT INTO knowledge_fts(knowledge_fts, rowid, key, value, tags)
+            VALUES ('delete', old.rowid, old.key, old.value, old.tags);
+            INSERT INTO knowledge_fts(rowid, key, value, tags)
+            VALUES (new.rowid, new.key, new.value, new.tags);
+        END;
+        CREATE TRIGGER IF NOT EXISTS knowledge_ad AFTER DELETE ON knowledge BEGIN
+            INSERT INTO knowledge_fts(knowledge_fts, rowid, key, value, tags)
+            VALUES ('delete', old.rowid, old.key, old.value, old.tags);
+        END;
+        CREATE TABLE IF NOT EXISTS knowledge_history (
+            id TEXT PRIMARY KEY, knowledge_id TEXT, action TEXT,
+            previous_value TEXT, actor TEXT, reason TEXT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+    conn.execute(
+        "INSERT INTO knowledge (id, key, value, level) VALUES (?, ?, ?, ?)",
+        ("id1", "k1", "[NEGATED] bad data\n\nPrevious value: original content", 0),
+    )
+    conn.commit()
+    conn.close()
+
+    conn = create_schema(db_file)
+    s = SQLiteStore(conn)
+    entry = s.get("k1")
+    assert entry.negated == "bad data"
+    assert entry.value == "original content"
