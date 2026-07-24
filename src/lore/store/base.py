@@ -36,6 +36,10 @@ class KnowledgeEntry:
     created_at: str | None = None
     updated_at: str | None = None
 
+    @property
+    def level_label(self) -> str:
+        return self.level_name or f"L{self.level}"
+
 
 class StoreBackend(ABC):
     @abstractmethod
@@ -96,7 +100,12 @@ class StoreBackend(ABC):
     ) -> KnowledgeEntry | None: ...
 
     @abstractmethod
-    def sync_upsert(self, entry: KnowledgeEntry) -> tuple[str, str]: ...
+    def sync_upsert(
+        self,
+        entry: KnowledgeEntry,
+        *,
+        pre_conflicts: list[KnowledgeEntry] | None = None,
+    ) -> tuple[str, str]: ...
 
     @abstractmethod
     def list_by_repo(self, repo_url: str, repo_branch: str) -> list[KnowledgeEntry]: ...
@@ -110,6 +119,23 @@ class StoreBackend(ABC):
         reason: str,
         actor: str,
     ) -> None: ...
+
+    @abstractmethod
+    def find_conflicts(self, key: str, level: int) -> list[KnowledgeEntry]: ...
+
+    @abstractmethod
+    def find_conflicts_batch(
+        self, keys: set[str], level: int
+    ) -> dict[str, list[KnowledgeEntry]]: ...
+
+    @abstractmethod
+    def apply_conflict(self, winner_id: str, loser_id: str) -> None: ...
+
+    @abstractmethod
+    def clear_conflict(self, entry_id: str) -> None: ...
+
+    @abstractmethod
+    def commit(self) -> None: ...
 
     @abstractmethod
     def delete_promoted_locals(self) -> int: ...

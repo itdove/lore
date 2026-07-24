@@ -732,3 +732,52 @@ def test_delete_by_source_logs_synced_out(store):
 def test_delete_by_source_not_found(store):
     with pytest.raises(KeyError):
         store.delete_by_source("missing", "url", "branch", "reason", "actor")
+
+
+# --- Conflict detection ---
+
+
+def test_find_conflicts_same_level_no_conflict(store):
+    store.store(_make_entry(key="k", value="v1", level=1))
+    store.store(_make_entry(key="k", value="v2", level=1))
+    assert store.find_conflicts("k", 1) == []
+
+
+def test_find_conflicts_different_level(store):
+    store.store(_make_entry(key="k", value="org-val", level=1))
+    conflicts = store.find_conflicts("k", 3)
+    assert len(conflicts) == 1
+    assert conflicts[0].value == "org-val"
+    assert conflicts[0].level == 1
+
+
+def test_apply_conflict_bidirectional(store):
+    w_id = store.store(_make_entry(key="k", value="team", level=3))
+    l_id = store.store(_make_entry(key="k", value="org", level=1))
+    store.apply_conflict(w_id, l_id)
+
+    winner = store.get_by_id(w_id)
+    loser = store.get_by_id(l_id)
+
+    assert winner.conflict_with == l_id
+    assert winner.conflict_status == "active"
+    assert loser.conflict_with == w_id
+    assert loser.conflict_status == "overridden"
+
+
+def test_clear_conflict_resets_counterpart(store):
+    w_id = store.store(_make_entry(key="k", value="team", level=3))
+    l_id = store.store(_make_entry(key="k", value="org", level=1))
+    store.apply_conflict(w_id, l_id)
+
+    store.clear_conflict(l_id)
+    winner = store.get_by_id(w_id)
+    assert winner.conflict_with is None
+    assert winner.conflict_status is None
+
+
+def test_clear_conflict_noop_when_no_conflict(store):
+    e_id = store.store(_make_entry(key="k", value="v", level=1))
+    store.clear_conflict(e_id)
+    entry = store.get_by_id(e_id)
+    assert entry.conflict_with is None

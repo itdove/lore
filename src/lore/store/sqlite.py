@@ -327,7 +327,21 @@ class SQLiteStore(StoreBackend):
             return None
         return self._row_to_entry(row)
 
-    def sync_upsert(self, entry: KnowledgeEntry) -> tuple[str, str]:
+    def sync_upsert(
+        self,
+        entry: KnowledgeEntry,
+        *,
+        pre_conflicts: list[KnowledgeEntry] | None = None,
+    ) -> tuple[str, str]:
+        conflicts = (
+            pre_conflicts
+            if pre_conflicts is not None
+            else self.find_conflicts(entry.key, entry.level)
+        )
+        for other in conflicts:
+            if other.locked and other.level < entry.level:
+                return "", "blocked"
+
         existing = self.get_by_source(entry.key, entry.repo_url, entry.repo_branch)
         now = datetime.now(timezone.utc).isoformat()
 
@@ -336,7 +350,6 @@ class SQLiteStore(StoreBackend):
             created = entry.created_at or now
             self._insert_entry(entry, entry_id, created, now)
             self._log_history(entry_id, "created")
-            self._conn.commit()
             return entry_id, "created"
 
         entry_id = existing.id
@@ -362,7 +375,6 @@ class SQLiteStore(StoreBackend):
             ),
         )
         self._log_history(entry_id, "updated", previous_value=existing.value)
-        self._conn.commit()
         return entry_id, "updated"
 
     def list_by_repo(self, repo_url: str, repo_branch: str) -> list[KnowledgeEntry]:
@@ -400,7 +412,6 @@ class SQLiteStore(StoreBackend):
             "WHERE key = ? AND repo_url = ? AND repo_branch = ?",
             (key, repo_url, repo_branch),
         )
-        self._conn.commit()
 
     def list_entries(
         self, tag: str | None = None, level: int | None = None
@@ -429,6 +440,66 @@ class SQLiteStore(StoreBackend):
         ).fetchall()
         return [self._row_to_entry(row) for row in rows]
 
+    def find_conflicts(self, key: str, level: int) -> list[KnowledgeEntry]:
+        rows = self._conn.execute(
+            "SELECT * FROM knowledge WHERE key = ? AND level != ?",
+            (key, level),
+        ).fetchall()
+        return [self._row_to_entry(row) for row in rows]
+
+    def apply_conflict(self, winner_id: str, loser_id: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        pairs = [
+            (winner_id, loser_id, "active", f"conflicts with {loser_id}"),
+            (loser_id, winner_id, "overridden", f"overridden by {winner_id}"),
+        ]
+        for entry_id, other_id, status, reason in pairs:
+            cur = self._conn.execute(
+                "UPDATE knowledge SET conflict_with = ?, conflict_status = ?, "
+                "updated_at = ? WHERE id = ?",
+                (other_id, status, now, entry_id),
+            )
+            if cur.rowcount:
+                self._log_history(entry_id, "conflict_detected", reason=reason)
+
+    def clear_conflict(self, entry_id: str) -> None:
+        rows = self._conn.execute(
+            "SELECT id FROM knowledge WHERE conflict_with = ?", (entry_id,)
+        ).fetchall()
+        if not rows:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            "UPDATE knowledge SET conflict_with = NULL, conflict_status = NULL, "
+            "updated_at = ? WHERE conflict_with = ?",
+            (now, entry_id),
+        )
+        for row in rows:
+            self._log_history(
+                row["id"],
+                "conflict_resolved",
+                reason=f"counterpart {entry_id} removed",
+            )
+
+    def find_conflicts_batch(
+        self, keys: set[str], level: int
+    ) -> dict[str, list[KnowledgeEntry]]:
+        if not keys:
+            return {}
+        placeholders = ", ".join("?" for _ in keys)
+        rows = self._conn.execute(
+            f"SELECT * FROM knowledge WHERE key IN ({placeholders}) AND level != ?",
+            [*keys, level],
+        ).fetchall()
+        result: dict[str, list[KnowledgeEntry]] = {}
+        for row in rows:
+            entry = self._row_to_entry(row)
+            result.setdefault(entry.key, []).append(entry)
+        return result
+
+    def commit(self) -> None:
+        self._conn.commit()
+
     def delete_promoted_locals(self) -> int:
         rows = self._conn.execute(
             "SELECT * FROM knowledge WHERE level = 0 "
@@ -445,8 +516,6 @@ class SQLiteStore(StoreBackend):
             )
             self._conn.execute("DELETE FROM knowledge WHERE id = ?", (row["id"],))
             count += 1
-        if count:
-            self._conn.commit()
         return count
 
     def health(self) -> dict:

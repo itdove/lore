@@ -12,6 +12,8 @@ class SyncResult:
     updated: int = 0
     deleted: int = 0
     promoted: int = 0
+    conflicts: int = 0
+    blocked: int = 0
     errors: list[str] = field(default_factory=list)
     details: list[str] = field(default_factory=list)
 
@@ -32,7 +34,9 @@ class SyncLogWriter:
                 f"**Created:** {result.created} | "
                 f"**Updated:** {result.updated} | "
                 f"**Deleted:** {result.deleted} | "
-                f"**Promoted:** {result.promoted}"
+                f"**Promoted:** {result.promoted} | "
+                f"**Conflicts:** {result.conflicts} | "
+                f"**Blocked:** {result.blocked}"
             ),
         ]
 
