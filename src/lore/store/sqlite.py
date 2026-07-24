@@ -232,9 +232,7 @@ class SQLiteStore(StoreBackend):
             return None
         return self._row_to_entry(row)
 
-    def _key_where(
-        self, key: str, level: int | None
-    ) -> tuple[str, list]:
+    def _key_where(self, key: str, level: int | None) -> tuple[str, list]:
         if level is not None:
             return "WHERE key = ? AND level = ?", [key, level]
         return "WHERE key = ?", [key]

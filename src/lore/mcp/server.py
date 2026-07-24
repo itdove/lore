@@ -57,9 +57,7 @@ def _resolve_level(level_name: str) -> tuple[int, str, str | None, str | None]:
         if h.name == level_name:
             return h.level, level_name, h.repo, h.branch
     available = ["individual"] + [h.name for h in cfg.hierarchy if h.name]
-    raise ValueError(
-        f"Unknown level '{level_name}'. Available: {available}"
-    )
+    raise ValueError(f"Unknown level '{level_name}'. Available: {available}")
 
 
 def create_server() -> FastMCP:
@@ -291,15 +289,11 @@ def create_server() -> FastMCP:
         if existing is None:
             other = store.get(key)
             if other is not None and other.level > 0:
-                return {
-                    "error": _SHARED_DELETE_ERR
-                }
+                return {"error": _SHARED_DELETE_ERR}
             return {"error": f"Key not found: '{key}' at level '{level}'"}
 
         if existing.level > 0:
-            return {
-                "error": _SHARED_DELETE_ERR
-            }
+            return {"error": _SHARED_DELETE_ERR}
 
         store.delete(key, reason="deleted via MCP", actor="mcp", level=level_int)
         return {"key": key, "deleted": True}

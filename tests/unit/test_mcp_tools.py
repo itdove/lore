@@ -397,12 +397,8 @@ def test_store_knowledge_invalid_key_empty_part(tools):
 
 
 def test_store_knowledge_dedup_same_level(tools, store):
-    tools["store_knowledge"](
-        key="cfg:db:timeout", value="30s", tags="config"
-    )
-    tools["store_knowledge"](
-        key="cfg:db:timeout", value="60s", tags="config,updated"
-    )
+    tools["store_knowledge"](key="cfg:db:timeout", value="30s", tags="config")
+    tools["store_knowledge"](key="cfg:db:timeout", value="60s", tags="config,updated")
 
     entries = store.list_entries()
     matching = [e for e in entries if e.key == "cfg:db:timeout"]
@@ -412,9 +408,7 @@ def test_store_knowledge_dedup_same_level(tools, store):
 
 
 def test_store_knowledge_dedup_different_level(tools, store):
-    tools["store_knowledge"](
-        key="cfg:db:timeout", value="local val", tags="config"
-    )
+    tools["store_knowledge"](key="cfg:db:timeout", value="local val", tags="config")
     store.store(
         _make_entry(
             key="cfg:db:timeout",
@@ -430,9 +424,7 @@ def test_store_knowledge_dedup_different_level(tools, store):
 
 
 def test_store_knowledge_update_does_not_corrupt_other_levels(tools, store):
-    tools["store_knowledge"](
-        key="cfg:db:timeout", value="local", tags="config"
-    )
+    tools["store_knowledge"](key="cfg:db:timeout", value="local", tags="config")
     store.store(
         _make_entry(
             key="cfg:db:timeout",
@@ -441,14 +433,10 @@ def test_store_knowledge_update_does_not_corrupt_other_levels(tools, store):
             level_name="team",
         )
     )
-    tools["store_knowledge"](
-        key="cfg:db:timeout", value="local v2", tags="config"
-    )
+    tools["store_knowledge"](key="cfg:db:timeout", value="local v2", tags="config")
 
     entries = store.list_entries()
-    shared = [
-        e for e in entries if e.key == "cfg:db:timeout" and e.level == 1
-    ]
+    shared = [e for e in entries if e.key == "cfg:db:timeout" and e.level == 1]
     assert len(shared) == 1
     assert shared[0].value == "shared"
 
@@ -462,9 +450,7 @@ def test_store_knowledge_shared_level(tools, store, monkeypatch):
         "get_project_config",
         lambda: ProjectConfig(
             hierarchy=[
-                HierarchyLevel(
-                    level=1, repo="org/repo", branch="main", name="team"
-                )
+                HierarchyLevel(level=1, repo="org/repo", branch="main", name="team")
             ]
         ),
     )
@@ -487,16 +473,12 @@ def test_store_knowledge_unknown_level(tools, monkeypatch):
     import lore.mcp.server as srv
     from lore.config.models import ProjectConfig
 
-    monkeypatch.setattr(
-        srv, "get_project_config", lambda: ProjectConfig(hierarchy=[])
-    )
+    monkeypatch.setattr(srv, "get_project_config", lambda: ProjectConfig(hierarchy=[]))
 
     import pytest
 
     with pytest.raises(ValueError, match="Unknown level"):
-        tools["store_knowledge"](
-            key="a:b:c", value="val", level="nonexistent"
-        )
+        tools["store_knowledge"](key="a:b:c", value="val", level="nonexistent")
 
 
 def test_store_knowledge_history_logged(tools, store):
@@ -558,9 +540,7 @@ def test_delete_knowledge_individual(tools, store):
 
 
 def test_delete_knowledge_rejects_shared(tools, store):
-    store.store(
-        _make_entry(key="shared:team:convention", value="use tabs", level=1)
-    )
+    store.store(_make_entry(key="shared:team:convention", value="use tabs", level=1))
 
     result = tools["delete_knowledge"](key="shared:team:convention")
     assert "error" in result
@@ -589,9 +569,7 @@ def test_delete_knowledge_does_not_remove_shared_sibling(tools, store):
     tools["delete_knowledge"](key="cfg:db:timeout")
 
     shared = [
-        e
-        for e in store.list_entries()
-        if e.key == "cfg:db:timeout" and e.level == 1
+        e for e in store.list_entries() if e.key == "cfg:db:timeout" and e.level == 1
     ]
     assert len(shared) == 1
     assert shared[0].value == "shared"
