@@ -437,3 +437,126 @@ def test_sync_result_counts(sync_env):
     assert r2.created == 0
     assert r2.updated == 1
     assert r2.deleted == 1
+
+
+# --- Conflict detection during sync ---
+
+
+def test_sync_conflict_detected(sync_env):
+    """Same key at different levels → both stored with conflict fields."""
+    org_repo = "github.com/org/shared"
+    team_repo = "github.com/team/shared"
+    _setup_repo(
+        sync_env["cache"], org_repo, "main", {"naming/snake.md": "use snake_case\n"}
+    )
+    _setup_repo(
+        sync_env["cache"], team_repo, "main", {"naming/snake.md": "use camelCase\n"}
+    )
+    hierarchy = [
+        {"level": 1, "repo": org_repo, "branch": "main", "name": "org"},
+        {"level": 3, "repo": team_repo, "branch": "main", "name": "team"},
+    ]
+
+    with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
+        result = sync_env["engine"].sync_all(["/fake"])
+
+    assert result.conflicts >= 1
+    assert result.created == 2
+
+    org_entry = sync_env["store"].get_by_key_and_level("naming:snake", 1)
+    team_entry = sync_env["store"].get_by_key_and_level("naming:snake", 3)
+    assert org_entry is not None
+    assert team_entry is not None
+    assert team_entry.conflict_status == "active"
+    assert org_entry.conflict_status == "overridden"
+    assert team_entry.conflict_with == org_entry.id
+    assert org_entry.conflict_with == team_entry.id
+
+
+def test_sync_locked_blocks_lower(sync_env):
+    """Locked org entry blocks team entry from being stored."""
+    org_repo = "github.com/org/shared"
+    team_repo = "github.com/team/shared"
+    _setup_repo(
+        sync_env["cache"],
+        org_repo,
+        "main",
+        {"naming/snake.md": "---\nlock: true\n---\nuse snake_case\n"},
+    )
+    _setup_repo(
+        sync_env["cache"],
+        team_repo,
+        "main",
+        {"naming/snake.md": "use camelCase\n"},
+    )
+    hierarchy = [
+        {"level": 1, "repo": org_repo, "branch": "main", "name": "org"},
+        {"level": 3, "repo": team_repo, "branch": "main", "name": "team"},
+    ]
+
+    with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
+        result = sync_env["engine"].sync_all(["/fake"])
+
+    assert result.blocked == 1
+    assert result.created == 1
+
+    org_entry = sync_env["store"].get_by_key_and_level("naming:snake", 1)
+    team_entry = sync_env["store"].get_by_key_and_level("naming:snake", 3)
+    assert org_entry is not None
+    assert team_entry is None
+
+
+def test_sync_conflict_cleared_on_delete(sync_env):
+    """File removed from repo → counterpart's conflict cleared."""
+    org_repo = "github.com/org/shared"
+    team_repo = "github.com/team/shared"
+    _setup_repo(
+        sync_env["cache"], org_repo, "main", {"naming/snake.md": "use snake_case\n"}
+    )
+    _setup_repo(
+        sync_env["cache"], team_repo, "main", {"naming/snake.md": "use camelCase\n"}
+    )
+    hierarchy = [
+        {"level": 1, "repo": org_repo, "branch": "main", "name": "org"},
+        {"level": 3, "repo": team_repo, "branch": "main", "name": "team"},
+    ]
+
+    with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
+        sync_env["engine"].sync_all(["/fake"])
+
+    org_entry = sync_env["store"].get_by_key_and_level("naming:snake", 1)
+    assert org_entry.conflict_with is not None
+
+    repo_path = sync_env["git_mgr"].repo_path(org_repo, "main")
+    (repo_path / "naming" / "snake.md").unlink()
+
+    with (
+        _mock_project_config(hierarchy),
+        _mock_clone_or_pull(sync_env["git_mgr"], sha="new"),
+    ):
+        result = sync_env["engine"].sync_all(["/fake"])
+
+    assert result.deleted == 1
+    team_entry = sync_env["store"].get_by_key_and_level("naming:snake", 3)
+    assert team_entry.conflict_with is None
+    assert team_entry.conflict_status is None
+
+
+def test_sync_conflict_higher_level_wins(sync_env):
+    """Team (level=3) wins over org (level=1) for non-locked entries."""
+    org_repo = "github.com/org/shared"
+    team_repo = "github.com/team/shared"
+    _setup_repo(sync_env["cache"], org_repo, "main", {"api/rate.md": "100 req/min\n"})
+    _setup_repo(sync_env["cache"], team_repo, "main", {"api/rate.md": "500 req/min\n"})
+    hierarchy = [
+        {"level": 1, "repo": org_repo, "branch": "main", "name": "org"},
+        {"level": 3, "repo": team_repo, "branch": "main", "name": "team"},
+    ]
+
+    with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
+        sync_env["engine"].sync_all(["/fake"])
+
+    org_entry = sync_env["store"].get_by_key_and_level("api:rate", 1)
+    team_entry = sync_env["store"].get_by_key_and_level("api:rate", 3)
+    assert team_entry.conflict_status == "active"
+    assert org_entry.conflict_status == "overridden"
