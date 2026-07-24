@@ -29,6 +29,14 @@ class LLMConfig:
 class SearchConfig:
     embedding_provider: str = "none"
     embedding_model: str | None = None
+    embedding_base_url: str | None = None
+    dedup_threshold: float = 0.20
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.dedup_threshold <= 1.0:
+            raise ValueError(
+                f"dedup_threshold must be in [0, 1], got {self.dedup_threshold}"
+            )
 
 
 @dataclass

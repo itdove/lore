@@ -4,7 +4,9 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from lore.config.manager import get_project_config
+from lore.config.manager import get_global_config, get_project_config
+from lore.embedding import EmbeddingProvider, get_embedding_provider
+from lore.embedding.base import embed_to_blob
 from lore.store.base import KnowledgeEntry, StoreBackend
 from lore.store.priority import pick_winner
 from lore.sync.git import GitRepoManager, SyncError
@@ -32,6 +34,14 @@ class SyncEngine:
         now = datetime.now(timezone.utc).isoformat()
         result = SyncResult(timestamp=now)
 
+        cfg = get_global_config()
+        emb_provider: EmbeddingProvider | None = None
+        if cfg.search.embedding_provider != "none":
+            try:
+                emb_provider = get_embedding_provider()
+            except Exception:
+                logger.warning("Failed to init embedding provider", exc_info=True)
+
         repo_levels = self._collect_hierarchy(projects)
         if not repo_levels:
             self._log.write(result)
@@ -57,19 +67,29 @@ class SyncEngine:
             all_keys = {pf.key for pf in parsed_files}
             conflicts_by_key = self._store.find_conflicts_batch(all_keys, level)
 
+            old_state = sync_states.get(repo_hash)
+            changed: list[ParsedFile] = []
             for pf in parsed_files:
                 current_keys.add(pf.key)
                 new_hashes[pf.file_path] = pf.content_hash
-
-                old_state = sync_states.get(repo_hash)
                 if (
                     old_state
                     and old_state.file_hashes.get(pf.file_path) == pf.content_hash
                 ):
                     continue
+                changed.append(pf)
 
+            embeddings = self._batch_embed(changed, emb_provider)
+
+            for pf in changed:
                 entry = self._build_entry(
-                    pf, level, level_name, repo, branch, commit_sha
+                    pf,
+                    level,
+                    level_name,
+                    repo,
+                    branch,
+                    commit_sha,
+                    embeddings.get(pf.key),
                 )
 
                 others = conflicts_by_key.get(pf.key, [])
@@ -162,6 +182,32 @@ class SyncEngine:
                 f"[C] {pf.key} conflicts with {other.level_label} entry"
             )
 
+    def _batch_embed(
+        self,
+        files: list[ParsedFile],
+        emb_provider: EmbeddingProvider | None,
+    ) -> dict[str, bytes]:
+        if not emb_provider or not files:
+            return {}
+        texts = [f"{pf.key} {pf.value}" for pf in files]
+        result: dict[str, bytes] = {}
+        batch_size = 32
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i : i + batch_size]
+            batch_files = files[i : i + batch_size]
+            try:
+                vectors = emb_provider.embed_batch(batch_texts)
+                for pf, vec in zip(batch_files, vectors):
+                    if vec:
+                        result[pf.key] = embed_to_blob(vec)
+            except Exception:
+                logger.warning(
+                    "Batch embedding failed for %d files",
+                    len(batch_texts),
+                    exc_info=True,
+                )
+        return result
+
     def _build_entry(
         self,
         parsed: ParsedFile,
@@ -170,6 +216,7 @@ class SyncEngine:
         repo: str,
         branch: str,
         commit_sha: str,
+        embedding_blob: bytes | None = None,
     ) -> KnowledgeEntry:
         return KnowledgeEntry(
             key=parsed.key,
@@ -189,4 +236,5 @@ class SyncEngine:
                 }
             ),
             projects=parsed.projects,
+            embedding=embedding_blob,
         )

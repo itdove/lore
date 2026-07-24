@@ -918,3 +918,168 @@ def test_migrate_backfills_negated_prefix(tmp_path):
     entry = s.get("k1")
     assert entry.negated == "bad data"
     assert entry.value == "original content"
+
+
+# --- Hybrid search ---
+
+
+def test_query_vector_returns_closest(store):
+    """Vector search returns entries sorted by cosine distance."""
+    from lore.embedding.base import embed_to_blob
+
+    auth_emb = [0.9, 0.1, 0.0] + [0.0] * 5
+    db_emb = [0.0, 0.0, 0.9] + [0.0] * 5
+    query_emb = [0.85, 0.15, 0.05] + [0.0] * 5
+
+    store.store(
+        _make_entry(
+            key="bug:auth:jwt",
+            value="JWT token expiry",
+            embedding=embed_to_blob(auth_emb),
+        )
+    )
+    store.store(
+        _make_entry(
+            key="convention:db:pool",
+            value="Use connection pooling",
+            embedding=embed_to_blob(db_emb),
+        )
+    )
+
+    results = store.query_vector(query_emb, limit=5)
+    assert len(results) == 2
+    assert results[0][0].key == "bug:auth:jwt"  # closest to query
+    assert results[0][1] < results[1][1]  # distance ordering
+
+
+def test_query_vector_empty_embedding_returns_empty(store):
+    results = store.query_vector([], limit=5)
+    assert results == []
+
+
+def test_query_vector_no_embeddings_returns_empty(store):
+    store.store(_make_entry(key="test:no:embed", value="no embedding"))
+    results = store.query_vector([0.1, 0.2], limit=5)
+    assert results == []
+
+
+def test_query_vector_respects_level_filter(store):
+    from lore.embedding.base import embed_to_blob
+
+    emb = [0.5] * 8
+    store.store(
+        _make_entry(key="test:a:one", value="v1", level=0, embedding=embed_to_blob(emb))
+    )
+    store.store(
+        _make_entry(key="test:a:two", value="v2", level=1, embedding=embed_to_blob(emb))
+    )
+
+    results = store.query_vector(emb, limit=10, filter_levels=[0])
+    keys = {r[0].key for r in results}
+    assert "test:a:one" in keys
+    assert "test:a:two" not in keys
+
+
+def test_query_vector_excludes_negated(store):
+    from lore.embedding.base import embed_to_blob
+
+    emb = [0.5] * 8
+    store.store(
+        _make_entry(
+            key="test:neg:one",
+            value="v",
+            embedding=embed_to_blob(emb),
+            negated="old info",
+        )
+    )
+
+    results = store.query_vector(emb, limit=10)
+    assert len(results) == 0
+
+    results_incl = store.query_vector(emb, limit=10, include_negated=True)
+    assert len(results_incl) == 1
+
+
+def test_query_hybrid_fts_only_without_embedding(store):
+    store.store(
+        _make_entry(key="bug:auth:jwt", value="JWT token expiry causes auth failures")
+    )
+
+    results = store.query_hybrid("JWT token", query_embedding=None, limit=5)
+    assert len(results) == 1
+    assert results[0].key == "bug:auth:jwt"
+
+
+def test_query_hybrid_merges_fts_and_vector(store):
+    from lore.embedding.base import embed_to_blob
+
+    auth_emb = [0.9, 0.1, 0.0] + [0.0] * 5
+    db_emb = [0.0, 0.0, 0.9] + [0.0] * 5
+
+    store.store(
+        _make_entry(
+            key="bug:auth:jwt",
+            value="JWT token expiry",
+            embedding=embed_to_blob(auth_emb),
+        )
+    )
+    store.store(
+        _make_entry(
+            key="convention:db:pool",
+            value="connection pooling",
+            embedding=embed_to_blob(db_emb),
+        )
+    )
+
+    query_emb = [0.85, 0.15, 0.05] + [0.0] * 5
+    results = store.query_hybrid("auth", query_embedding=query_emb, limit=5)
+    assert len(results) >= 1
+    assert results[0].key == "bug:auth:jwt"
+
+
+def test_query_hybrid_rrf_boosts_both_signals(store):
+    """Entry appearing in both FTS and vector results gets higher RRF score."""
+    from lore.embedding.base import embed_to_blob
+
+    shared_emb = [0.9, 0.1] + [0.0] * 6
+    other_emb = [0.0, 0.0, 0.9] + [0.0] * 5
+
+    store.store(
+        _make_entry(
+            key="bug:auth:jwt",
+            value="JWT authentication token expiry",
+            embedding=embed_to_blob(shared_emb),
+        )
+    )
+    store.store(
+        _make_entry(
+            key="convention:db:pool",
+            value="use connection pooling for databases",
+            embedding=embed_to_blob(other_emb),
+        )
+    )
+
+    results = store.query_hybrid("authentication", query_embedding=shared_emb, limit=5)
+    assert results[0].key == "bug:auth:jwt"
+
+
+def test_query_hybrid_semantic_finds_no_keyword_match(store):
+    """Vector search finds semantically similar entry even without keyword overlap."""
+    from lore.embedding.base import embed_to_blob
+
+    # "auth issues" embedding similar to "JWT token expiry" embedding
+    jwt_emb = [0.9, 0.1, 0.0] + [0.0] * 5
+    query_emb = [0.85, 0.15, 0.05] + [0.0] * 5
+
+    store.store(
+        _make_entry(
+            key="bug:auth:jwt",
+            value="JWT token expiry causes login failures",
+            embedding=embed_to_blob(jwt_emb),
+        )
+    )
+
+    # FTS won't match "auth issues" against "JWT token expiry"
+    # but vector search should find it
+    results = store.query_hybrid("auth issues", query_embedding=query_emb, limit=5)
+    assert any(r.key == "bug:auth:jwt" for r in results)
