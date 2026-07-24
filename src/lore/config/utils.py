@@ -50,3 +50,11 @@ def sync_log_path() -> Path:
 
 def repos_cache_path() -> Path:
     return cache_dir() / "repos"
+
+
+def is_configured() -> bool:
+    return config_path().exists()
+
+
+def is_project() -> bool:
+    return (Path.cwd() / ".lore").is_dir()

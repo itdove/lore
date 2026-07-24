@@ -229,24 +229,14 @@ def _cmd_mcp_server(args: argparse.Namespace) -> int:
 
 
 def _cmd_sync_status(args: argparse.Namespace) -> int:
-    from lore.config.manager import get_global_config
-    from lore.config.utils import sync_lock_path, sync_state_path
-    from lore.sync.lock import SyncLockManager
-    from lore.sync.state import SyncStateManager, is_stale
+    from lore.sync.helpers import get_sync_status_dict
 
-    config = get_global_config()
-    state_mgr = SyncStateManager(sync_state_path())
-    lock_mgr = SyncLockManager(sync_lock_path())
-
-    last_sync = state_mgr.last_sync_time()
-    threshold = config.sync.staleness_threshold_minutes
-    stale = is_stale(last_sync, threshold)
-
-    print(f"Last sync: {last_sync or 'never'}")
-    print(f"Staleness threshold: {threshold} minutes")
-    print(f"Status: {'STALE' if stale else 'FRESH'}")
-    print(f"Auto-sync: {'enabled' if config.sync.auto_sync else 'disabled'}")
-    print(f"Sync in progress: {'yes' if lock_mgr.is_locked else 'no'}")
+    status = get_sync_status_dict()
+    print(f"Last sync: {status['last_sync'] or 'never'}")
+    print(f"Staleness threshold: {status['threshold_minutes']} minutes")
+    print(f"Status: {'STALE' if status['stale'] else 'FRESH'}")
+    print(f"Auto-sync: {'enabled' if status['auto_sync'] else 'disabled'}")
+    print(f"Sync in progress: {'yes' if status['locked'] else 'no'}")
     return 0
 
 
@@ -254,49 +244,29 @@ def _cmd_sync(args: argparse.Namespace) -> int:
     if getattr(args, "status", False):
         return _cmd_sync_status(args)
 
-    from lore.config.manager import get_global_config
-    from lore.config.utils import (
-        repos_cache_path,
-        sync_lock_path,
-        sync_log_path,
-        sync_state_path,
-    )
-    from lore.sync.engine import SyncEngine
-    from lore.sync.git import GitRepoManager
-    from lore.sync.lock import SyncLockManager
-    from lore.sync.log import SyncLogWriter
-    from lore.sync.state import SyncStateManager, is_stale
-
-    config = get_global_config()
-    state_mgr = SyncStateManager(sync_state_path())
+    from lore.sync.helpers import get_sync_status_dict, run_sync
 
     if not getattr(args, "force", False):
-        last_sync = state_mgr.last_sync_time()
-        if not is_stale(last_sync, config.sync.staleness_threshold_minutes):
+        status = get_sync_status_dict()
+        if not status["stale"]:
             print("Knowledge base is fresh. Use --force to sync anyway.")
             return 0
 
     try:
-        with SyncLockManager(sync_lock_path()):
-            store = _get_store()
-            git_mgr = GitRepoManager(repos_cache_path())
-            log_writer = SyncLogWriter(sync_log_path())
+        result = run_sync(_get_store())
 
-            engine = SyncEngine(store, git_mgr, state_mgr, log_writer)
-            result = engine.sync_all(config.projects)
+        print(
+            f"Sync complete: {result.created} created, {result.updated} updated, "
+            f"{result.deleted} deleted, {result.promoted} promoted"
+        )
+        if result.errors:
+            for err in result.errors:
+                print(f"  ERROR: {err}", file=sys.stderr)
+        if getattr(args, "verbose", False) and result.details:
+            for detail in result.details:
+                print(f"  {detail}")
 
-            print(
-                f"Sync complete: {result.created} created, {result.updated} updated, "
-                f"{result.deleted} deleted, {result.promoted} promoted"
-            )
-            if result.errors:
-                for err in result.errors:
-                    print(f"  ERROR: {err}", file=sys.stderr)
-            if getattr(args, "verbose", False) and result.details:
-                for detail in result.details:
-                    print(f"  {detail}")
-
-            return 1 if result.errors else 0
+        return 1 if result.errors else 0
     except RuntimeError:
         print("Sync already in progress (lock held).", file=sys.stderr)
         return 1
@@ -373,7 +343,9 @@ def _project_config_path() -> Path:
 
 
 def _is_lore_project() -> bool:
-    return (Path.cwd() / ".lore").is_dir()
+    from lore.config.utils import is_project
+
+    return is_project()
 
 
 def _resolve_config_path(use_global: bool) -> Path | None:
@@ -531,6 +503,23 @@ def _cmd_config_edit(args: argparse.Namespace) -> int:
 # =====================================================================
 
 
+def _cmd_dashboard(args: argparse.Namespace) -> int:
+    from lore.dashboard import launch
+
+    if args.host != "127.0.0.1":
+        print(
+            f"WARNING: Binding to {args.host} exposes the dashboard "
+            "without authentication. Use only on trusted networks.",
+            file=sys.stderr,
+        )
+
+    try:
+        launch(host=args.host, port=args.port)
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 def _cmd_hook(args: argparse.Namespace) -> int:
     sub = getattr(args, "hook_command", None)
     if sub == "recall":
@@ -678,6 +667,14 @@ def main(argv: list[str] | None = None) -> None:
         "--global", dest="global_", action="store_true", help="Edit global config"
     )
 
+    dashboard_parser = sub.add_parser("dashboard", help="Launch web dashboard")
+    dashboard_parser.add_argument(
+        "--port", type=int, default=8765, help="Port (default: 8765)"
+    )
+    dashboard_parser.add_argument(
+        "--host", default="127.0.0.1", help="Host (default: 127.0.0.1)"
+    )
+
     hook_parser = sub.add_parser("hook", help="Claude Code hook handlers")
     hook_sub = hook_parser.add_subparsers(dest="hook_command")
     hook_sub.add_parser("recall", help="Recall context (UserPromptSubmit)")
@@ -692,6 +689,7 @@ def main(argv: list[str] | None = None) -> None:
         "sync": _cmd_sync,
         "search": _cmd_search,
         "conflicts": _cmd_conflicts,
+        "dashboard": _cmd_dashboard,
         "config": _cmd_config,
         "hook": _cmd_hook,
     }

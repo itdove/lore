@@ -1,7 +1,19 @@
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+
+_KEY_RE = re.compile(r"^[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+$")
+
+
+def validate_key(key: str) -> str | None:
+    if not _KEY_RE.match(key):
+        return (
+            "Invalid key format. Expected 'type:domain:slug' "
+            "with alphanumeric, hyphens, underscores."
+        )
+    return None
 
 
 @dataclass
