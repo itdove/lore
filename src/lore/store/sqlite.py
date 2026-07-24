@@ -223,17 +223,49 @@ class SQLiteStore(StoreBackend):
             return None
         return self._row_to_entry(row)
 
-    def update(self, key: str, value: str, reason: str, actor: str) -> None:
+    def get_by_key_and_level(self, key: str, level: int) -> KnowledgeEntry | None:
         row = self._conn.execute(
-            "SELECT id, value FROM knowledge WHERE key = ?", (key,)
+            "SELECT * FROM knowledge WHERE key = ? AND level = ? LIMIT 1",
+            (key, level),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_entry(row)
+
+    def _key_where(self, key: str, level: int | None) -> tuple[str, list]:
+        if level is not None:
+            return "WHERE key = ? AND level = ?", [key, level]
+        return "WHERE key = ?", [key]
+
+    def update(
+        self,
+        key: str,
+        value: str,
+        reason: str,
+        actor: str,
+        *,
+        tags: str | None = None,
+        level: int | None = None,
+    ) -> None:
+        where, where_params = self._key_where(key, level)
+        row = self._conn.execute(
+            f"SELECT id, value FROM knowledge {where}", where_params
         ).fetchone()
         if row is None:
             raise KeyError(key)
 
         now = datetime.now(timezone.utc).isoformat()
+        set_parts = ["value = ?"]
+        params: list = [value]
+        if tags is not None:
+            set_parts.append("tags = ?")
+            params.append(tags)
+        set_parts.append("updated_at = ?")
+        params.append(now)
+        params.extend(where_params)
         self._conn.execute(
-            "UPDATE knowledge SET value = ?, updated_at = ? WHERE key = ?",
-            (value, now, key),
+            f"UPDATE knowledge SET {', '.join(set_parts)} {where}",
+            params,
         )
         self._log_history(
             row["id"],
@@ -244,9 +276,12 @@ class SQLiteStore(StoreBackend):
         )
         self._conn.commit()
 
-    def delete(self, key: str, reason: str, actor: str) -> None:
+    def delete(
+        self, key: str, reason: str, actor: str, *, level: int | None = None
+    ) -> None:
+        where, where_params = self._key_where(key, level)
         row = self._conn.execute(
-            "SELECT id, value FROM knowledge WHERE key = ?", (key,)
+            f"SELECT id, value FROM knowledge {where}", where_params
         ).fetchone()
         if row is None:
             raise KeyError(key)
@@ -258,7 +293,7 @@ class SQLiteStore(StoreBackend):
             actor=actor,
             reason=reason,
         )
-        self._conn.execute("DELETE FROM knowledge WHERE key = ?", (key,))
+        self._conn.execute(f"DELETE FROM knowledge {where}", where_params)
         self._conn.commit()
 
     def get_history(self, knowledge_id: str) -> list[HistoryRecord]:
