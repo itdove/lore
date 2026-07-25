@@ -13,6 +13,8 @@ def render_overview() -> None:
     health = store.health()
     sync_status = get_sync_status()
 
+    from lore.store.sqlite import _VEC_LOADED
+
     with ui.row().classes("q-gutter-md"):
         _stat_card("Total Entries", str(health["total_entries"]), "storage")
         _stat_card(
@@ -33,6 +35,12 @@ def render_overview() -> None:
             str(negated),
             "block",
             color="deep-purple" if negated > 0 else "grey",
+        )
+        _stat_card(
+            "sqlite-vec",
+            "Active" if _VEC_LOADED else "Fallback",
+            "memory" if _VEC_LOADED else "speed",
+            color="positive" if _VEC_LOADED else "warning",
         )
 
     ui.label("Entries by Level").classes("text-subtitle1 q-mt-lg q-mb-sm")
