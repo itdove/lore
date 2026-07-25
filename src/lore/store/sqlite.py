@@ -91,6 +91,7 @@ _KNOWLEDGE_COLUMNS = [
     "created_at",
     "updated_at",
 ]
+_KNOWLEDGE_COLUMNS_SET = set(_KNOWLEDGE_COLUMNS)
 
 
 def create_schema(
@@ -119,7 +120,7 @@ class SQLiteStore(StoreBackend):
         self._conn.row_factory = sqlite3.Row
 
     def _row_to_entry(self, row: sqlite3.Row) -> KnowledgeEntry:
-        d = dict(row)
+        d = {k: v for k, v in dict(row).items() if k in _KNOWLEDGE_COLUMNS_SET}
         d["locked"] = bool(d["locked"])
         return KnowledgeEntry(**d)
 

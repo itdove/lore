@@ -325,6 +325,7 @@ def test_search_uses_hybrid_when_embedding_configured(store, capsys):
 
     fake_cfg = mock.MagicMock()
     fake_cfg.search.embedding_provider = "ollama"
+    fake_cfg.search.min_similarity = 0.0
 
     fake_embedding = [0.1] * 384
 
