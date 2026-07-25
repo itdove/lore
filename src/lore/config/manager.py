@@ -19,7 +19,7 @@ from lore.config.models import (
     SyncConfig,
 )
 
-_GLOBAL_ONLY_KEYS = frozenset(("search",))
+_GLOBAL_ONLY_KEYS: frozenset[str] = frozenset()
 
 
 def _parse_sub_config(cls, data: dict | None):

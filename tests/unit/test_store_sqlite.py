@@ -889,6 +889,49 @@ def test_create_schema_tries_sqlite_vec():
             conn.execute("SELECT vec_distance_cosine(X'00000000', X'00000000')")
 
 
+def test_create_schema_logs_warning_when_vec_unavailable(caplog):
+    """Warning logged when sqlite-vec fails to load."""
+    from unittest.mock import patch
+
+    import lore.store.sqlite as mod
+
+    old = mod._VEC_LOADED
+    mod._VEC_LOADED = False
+    try:
+        with patch(
+            "lore.store.sqlite.sqlite_vec.load", side_effect=AttributeError("no ext")
+        ):
+            with caplog.at_level("WARNING", logger="lore.store"):
+                create_schema(":memory:")
+            assert "sqlite-vec not loaded" in caplog.text
+            assert "Python cosine distance" in caplog.text
+    finally:
+        mod._VEC_LOADED = old
+
+
+def test_create_schema_calls_enable_load_extension():
+    """enable_load_extension(True) called before sqlite_vec.load."""
+    from unittest.mock import patch
+
+    import lore.store.sqlite as mod
+
+    old = mod._VEC_LOADED
+    mod._VEC_LOADED = False
+    calls = []
+
+    class TrackingConn(sqlite3.Connection):
+        def enable_load_extension(self, flag):
+            calls.append(flag)
+
+    tracked = TrackingConn(":memory:")
+    try:
+        with patch("lore.store.sqlite.sqlite_vec.load"):
+            create_schema(tracked)
+        assert calls == [True, False]
+    finally:
+        mod._VEC_LOADED = old
+
+
 def test_query_vector_returns_closest(store):
     """Vector search returns entries sorted by cosine distance."""
     from lore.embedding.base import embed_to_blob

@@ -1244,3 +1244,31 @@ def test_auto_sync_never_crashes():
         side_effect=RuntimeError("config broken"),
     ):
         _maybe_trigger_auto_sync()
+
+
+def test_init_warns_when_vec_not_loaded(tmp_path, capsys):
+    project_dir = tmp_path / "myproject"
+    project_dir.mkdir()
+
+    import lore.store.sqlite as sqlite_mod
+
+    with mock.patch("lore.cli.input", side_effect=["0"]):
+        with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
+            with mock.patch.object(Path, "cwd", return_value=project_dir):
+                old = sqlite_mod._VEC_LOADED
+                sqlite_mod._VEC_LOADED = False
+                try:
+                    with mock.patch(
+                        "lore.store.sqlite.sqlite_vec.load",
+                        side_effect=AttributeError("no ext"),
+                    ):
+                        import argparse
+
+                        from lore.cli import _cmd_init
+
+                        _cmd_init(argparse.Namespace())
+                finally:
+                    sqlite_mod._VEC_LOADED = old
+
+    output = capsys.readouterr().out
+    assert "WARNING: sqlite-vec extension not loaded" in output

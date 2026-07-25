@@ -237,8 +237,8 @@ def test_get_global_config_merges_project_llm(tmp_path):
         assert gc.llm.model == "default"
 
 
-def test_get_global_config_search_stays_global(tmp_path):
-    """Search config is global-only — project-level search settings ignored."""
+def test_get_global_config_search_merges_from_project(tmp_path):
+    """Project-level search settings override global defaults."""
     global_dir = tmp_path / "global"
     global_dir.mkdir()
     project_dir = tmp_path / "project"
@@ -266,7 +266,7 @@ def test_get_global_config_search_stays_global(tmp_path):
     with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(global_dir)}):
         _clear_config_cache()
         gc = get_global_config(project_dir=project_dir)
-        assert gc.search.embedding_provider == "none"
+        assert gc.search.embedding_provider == "ollama"
         assert gc.search.embedding_model == "global-model"
 
 

@@ -32,11 +32,11 @@ session starts                        session starts
 - **Numbered levels** — level 0 = individual (implicit, highest priority), levels 1-N = shared (admin-defined). Lower level = higher priority = wins in conflicts. No org/product/team assumptions — any structure fits.
 - **Locked entries** — any level's maintainers can mark entries as immutable via frontmatter (`lock: true`). Lower levels cannot override.
 - **Conflict tracking** — when non-locked entries conflict across levels, both are stored with bidirectional links. Lower level wins (more specific). Conflicts are queryable and reportable.
-- **Hybrid search** — FTS5 (implemented), with vector + BM25 + reciprocal rank fusion + LLM synthesis planned for Phase 2.
+- **Hybrid search** — FTS5 + vector cosine distance + reciprocal rank fusion + LLM synthesis. sqlite-vec for SQL-level distance when available, pure-Python fallback otherwise.
 - **Anti-poisoning** — shared writes require PR approval. Individual writes are immediate (your knowledge, your risk). No hallucination propagation to team store.
 - **Token cost reduction** — replaces N file reads + reasoning with 1 MCP call returning a short synthesis. Fewer tokens in context = less cache churn = lower cost.
-- **13-agent hooks** — Claude Code, Cursor, Copilot, Codex, Windsurf, Gemini CLI, Cline, Kiro, Augment, OpenCode, AiderDesk, OpenClaw, Junie. Hook adapter architecture adapted from [ai-guardian](https://github.com/itdove/ai-guardian).
-- **Ingester framework** — auto-capture from ReasonsForge, OpenWolf, Debuggernaut, sdlc-mcp, Jira, git at session end. Lore is a knowledge aggregator, not just a store.
+- **Auto-sync** — hook-triggered sync on session start, with staleness detection and configurable thresholds.
+- **Web dashboard** — NiceGUI-based browser UI for browsing entries, managing individual knowledge, resolving conflicts, and monitoring sync status.
 
 ### Architecture
 
@@ -48,7 +48,7 @@ level N repo@branch ──── PR ────┐
 level 2 repo@branch ──── PR ────┤           FastMCP Server (stdio)
 level 1 repo@branch ──── PR ────┤           ├── SQLite DB (all projects)
                                 │           ├── LLM (Ollama local or remote)
-level 0 (individual) ───────────┘           └── periodic git pull + reindex
+level 0 (individual) ───────────┘           └── auto-sync via hook + staleness
 (local only, highest priority)
 
 Project A/.lore/config.json → hierarchy for project A
@@ -86,7 +86,7 @@ lore init
 2. Prompts for shared hierarchy levels (repo URLs + branches), or reuse an existing project's hierarchy
 3. Creates `.lore/config.json` in your project
 4. Sets up the SQLite database
-5. Registers the MCP server in `~/.claude.json`
+5. Registers the MCP server (`.mcp.json` + `.claude/settings.json`)
 6. Runs the first sync
 
 ### CLI Commands
@@ -98,6 +98,8 @@ lore init
 # Sync all knowledge repos across registered projects
 lore sync
 lore sync --verbose
+lore sync --force              # Sync even if fresh
+lore sync --status             # Show sync status without syncing
 
 # Search knowledge scoped to current project's hierarchy
 lore search "authentication patterns"
@@ -114,6 +116,15 @@ lore config set --global <key> <value>  # Set in global config
 lore config edit              # Open project config in $EDITOR
 lore config edit --global     # Open global config in $EDITOR
 
+# Claude Code hook handlers
+lore hook recall               # Recall context (UserPromptSubmit)
+lore hook nudge                # Mid-session nudge (PostToolUse)
+lore hook capture              # Capture knowledge (SessionEnd)
+
+# Launch web dashboard
+lore dashboard
+lore dashboard --port 8765 --host 127.0.0.1
+
 # Start MCP server (used by AI agents, not run directly)
 lore mcp-server
 ```
@@ -124,10 +135,13 @@ Once the MCP server is registered, AI agents have access to:
 
 | Tool | Description |
 |------|-------------|
-| `query_knowledge` | FTS5 search with priority resolution across hierarchy levels |
+| `query_knowledge` | Hybrid search (FTS5 + vector + RRF) with priority resolution and LLM synthesis |
 | `list_knowledge` | List entries with optional tag/level filters and history |
 | `list_conflicts` | Show all conflicting entries with both sides linked |
-| `health_check` | Entry counts per level, conflict count, staleness info |
+| `health_check` | Entry counts per level, conflict count, staleness, sqlite-vec status |
+| `store_knowledge` | Store or update a knowledge entry (individual or shared via PR) |
+| `negate_knowledge` | Mark an entry as incorrect/outdated with reason |
+| `delete_knowledge` | Delete an individual entry (shared entries rejected with PR message) |
 
 ### Vector Search Performance
 
@@ -139,6 +153,7 @@ Lore uses [sqlite-vec](https://github.com/asg017/sqlite-vec) for SQL-level cosin
 brew install sqlite
 LDFLAGS="-L$(brew --prefix sqlite)/lib" \
 CPPFLAGS="-I$(brew --prefix sqlite)/include" \
+PYTHON_CONFIGURE_OPTS="--enable-loadable-sqlite-extensions" \
 pyenv install 3.12 --force
 ```
 
@@ -148,6 +163,7 @@ pyenv install 3.12 --force
 brew install sqlite
 LDFLAGS="-L$(brew --prefix sqlite)/lib" \
 CPPFLAGS="-I$(brew --prefix sqlite)/include" \
+PYTHON_CONFIGURE_OPTS="--enable-loadable-sqlite-extensions" \
 pyenv install 3.12
 uv venv --python $(pyenv prefix 3.12)/bin/python
 ```
@@ -162,18 +178,30 @@ python -m pytest tests/ -v
 
 ## Status
 
-**MVP Sprint 1 complete.** Core functionality implemented:
+**MVP + Phase 2 complete.** All core functionality and hybrid search implemented:
 
+**MVP Sprint 1 — Core:**
 - Config loading with XDG paths and project hierarchy ([#2](https://github.com/itdove/lore/issues/2))
 - SQLite schema with FTS5 full-text search ([#3](https://github.com/itdove/lore/issues/3))
 - FastMCP server with bundled LORE.md instructions ([#4](https://github.com/itdove/lore/issues/4))
 - MCP tool handlers: query, list, conflicts, health ([#5](https://github.com/itdove/lore/issues/5))
 - Git repo sync engine: clone/pull, parse markdown frontmatter, index to SQLite ([#6](https://github.com/itdove/lore/issues/6))
-- CLI: `lore init`, `lore sync`, `lore search`, `lore conflicts`, `lore mcp-server` ([#7](https://github.com/itdove/lore/issues/7))
-- Config CLI: `lore config show`, `lore config set`, `lore config edit` ([#29](https://github.com/itdove/lore/issues/29))
+- CLI: init, sync, search, conflicts, mcp-server ([#7](https://github.com/itdove/lore/issues/7))
+- Config CLI: show, set, edit ([#29](https://github.com/itdove/lore/issues/29))
 - CI/CD with pytest, black, ruff ([#22](https://github.com/itdove/lore/issues/22))
 
-See [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the phased roadmap.
+**MVP Sprint 2 — Write Path:**
+- Write-path MCP tools: store, negate, delete ([#8](https://github.com/itdove/lore/issues/8))
+- LLM provider ABC + Ollama: synthesis + capture ([#10](https://github.com/itdove/lore/issues/10))
+- GitInterface ABC + GitHub PR creation ([#11](https://github.com/itdove/lore/issues/11))
+- Conflict detection + tracking at sync time ([#12](https://github.com/itdove/lore/issues/12))
+- NiceGUI dashboard: browser, CRUD, conflicts, sync ([#13](https://github.com/itdove/lore/issues/13))
+- Auto-sync: scheduled and hook-triggered ([#40](https://github.com/itdove/lore/issues/40))
+
+**Phase 2 — Hybrid Search:**
+- Embedding provider ABC + Ollama + sqlite-vec + RRF ([#14](https://github.com/itdove/lore/issues/14))
+
+See [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the full roadmap.
 
 ## Landscape
 
@@ -186,6 +214,7 @@ Lore is complementary to existing tools, not competing:
 | ReasonsForge | Deep codebase analysis + reasoning | Per-codebase |
 | OpenClaw Memory | Single-user session memory | Per-workspace |
 | HiveShare | Team shared memory (closest competitor) | Per-hiveshare (flat) |
+| MemoryHub | Structured memory with tags | Per-user (flat) |
 | **Lore** | **Cross-team knowledge sharing + aggregation** | **N-level hierarchy** |
 
 ## License

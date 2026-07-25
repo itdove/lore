@@ -106,10 +106,16 @@ def create_schema(
 
     global _VEC_LOADED
     try:
+        conn.enable_load_extension(True)
         sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
         _VEC_LOADED = True
-    except AttributeError:
-        pass
+    except (AttributeError, sqlite3.OperationalError) as exc:
+        if not _VEC_LOADED:
+            log.warning(
+                "sqlite-vec not loaded, falling back to Python cosine distance: %s",
+                exc,
+            )
     conn.executescript(_SCHEMA_SQL)
     return conn
 
@@ -714,4 +720,5 @@ class SQLiteStore(StoreBackend):
             "negated_count": row[3],
             "oldest_entry": row[4],
             "newest_entry": row[5],
+            "sqlite_vec_loaded": _VEC_LOADED,
         }

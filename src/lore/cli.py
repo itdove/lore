@@ -213,6 +213,7 @@ def _get_store():
 
 def _cmd_init(args: argparse.Namespace) -> int:
     from lore.config.utils import db_path
+    from lore.store import sqlite as sqlite_mod
     from lore.store.sqlite import create_schema
 
     print("Initializing lore...")
@@ -231,6 +232,12 @@ def _cmd_init(args: argparse.Namespace) -> int:
     db.parent.mkdir(parents=True, exist_ok=True)
     create_schema(str(db))
     print("  Database ready")
+    if not sqlite_mod._VEC_LOADED:
+        print(
+            "  WARNING: sqlite-vec extension not loaded — "
+            "vector search will use slower Python fallback.\n"
+            "  See README.md 'Vector Search Performance' for rebuild instructions."
+        )
 
     global_cfg = _register_project(global_cfg)
     print("  Project registered")
@@ -302,6 +309,13 @@ def _cmd_sync(args: argparse.Namespace) -> int:
         if getattr(args, "verbose", False) and result.details:
             for detail in result.details:
                 print(f"  {detail}")
+
+        from lore.store import sqlite as sqlite_mod
+
+        if not sqlite_mod._VEC_LOADED:
+            print(
+                "WARNING: sqlite-vec not loaded — vector search using Python fallback."
+            )
 
         return 1 if result.errors else 0
     except RuntimeError:
