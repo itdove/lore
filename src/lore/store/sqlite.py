@@ -585,6 +585,7 @@ class SQLiteStore(StoreBackend):
         filter_levels: list[int] | None = None,
         filter_repos: list[tuple[str, str]] | None = None,
         include_negated: bool = False,
+        min_similarity: float = 0.0,
     ) -> list[tuple[KnowledgeEntry, float]]:
         if not embedding:
             return []
@@ -602,12 +603,14 @@ class SQLiteStore(StoreBackend):
             log.warning("Vector search failed: %s", exc)
             return []
 
+        max_distance = 1.0 - min_similarity
         scored = []
         for row in rows:
             entry = self._row_to_entry(row)
             stored = blob_to_embed(row["embedding"])
             dist = cosine_distance(embedding, stored)
-            scored.append((entry, dist))
+            if dist <= max_distance:
+                scored.append((entry, dist))
 
         scored.sort(key=lambda x: x[1])
         return scored[:limit]
@@ -620,6 +623,7 @@ class SQLiteStore(StoreBackend):
         filter_levels: list[int] | None = None,
         filter_repos: list[tuple[str, str]] | None = None,
         include_negated: bool = False,
+        min_similarity: float = 0.0,
     ) -> list[KnowledgeEntry]:
         pool = limit * 3
         fts_results = self.query_fts(
@@ -639,6 +643,7 @@ class SQLiteStore(StoreBackend):
             filter_levels=filter_levels,
             filter_repos=filter_repos,
             include_negated=include_negated,
+            min_similarity=min_similarity,
         )
 
         if not vec_results:

@@ -155,6 +155,7 @@ def create_server() -> FastMCP:
             query_embedding=query_embedding,
             limit=50,
             filter_levels=filter_levels,
+            min_similarity=cfg.search.min_similarity,
         )
         resolved = resolve_priority(raw_results)
 

@@ -346,6 +346,7 @@ def _cmd_search(args: argparse.Namespace) -> int:
         limit=50,
         filter_levels=filter_levels,
         filter_repos=filter_repos,
+        min_similarity=cfg.search.min_similarity,
     )
     resolved = resolve_priority(raw)
 
