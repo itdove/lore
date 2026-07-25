@@ -215,6 +215,168 @@ def test_get_global_config_sync_object(tmp_path):
         assert gc.sync.on_session_start is False
 
 
+def test_get_global_config_merges_project_llm(tmp_path):
+    """Project-level llm config overrides global."""
+    global_dir = tmp_path / "global"
+    global_dir.mkdir()
+    project_dir = tmp_path / "project"
+    lore_dir = project_dir / ".lore"
+    lore_dir.mkdir(parents=True)
+
+    global_cfg = global_dir / "config.json"
+    global_cfg.write_text(
+        json.dumps({"lore": {"llm": {"provider": "none", "model": "default"}}})
+    )
+    project_cfg = lore_dir / "config.json"
+    project_cfg.write_text(json.dumps({"lore": {"llm": {"provider": "ollama"}}}))
+
+    with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(global_dir)}):
+        _clear_config_cache()
+        gc = get_global_config(project_dir=project_dir)
+        assert gc.llm.provider == "ollama"
+        assert gc.llm.model == "default"
+
+
+def test_get_global_config_search_stays_global(tmp_path):
+    """Search config is global-only — project-level search settings ignored."""
+    global_dir = tmp_path / "global"
+    global_dir.mkdir()
+    project_dir = tmp_path / "project"
+    lore_dir = project_dir / ".lore"
+    lore_dir.mkdir(parents=True)
+
+    global_cfg = global_dir / "config.json"
+    global_cfg.write_text(
+        json.dumps(
+            {
+                "lore": {
+                    "search": {
+                        "embedding_provider": "none",
+                        "embedding_model": "global-model",
+                    }
+                }
+            }
+        )
+    )
+    project_cfg = lore_dir / "config.json"
+    project_cfg.write_text(
+        json.dumps({"lore": {"search": {"embedding_provider": "ollama"}}})
+    )
+
+    with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(global_dir)}):
+        _clear_config_cache()
+        gc = get_global_config(project_dir=project_dir)
+        assert gc.search.embedding_provider == "none"
+        assert gc.search.embedding_model == "global-model"
+
+
+def test_get_global_config_fallback_no_project_config(tmp_path):
+    """Global config used as fallback when project has no config."""
+    global_dir = tmp_path / "global"
+    global_dir.mkdir()
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+
+    global_cfg = global_dir / "config.json"
+    global_cfg.write_text(json.dumps({"lore": {"llm": {"provider": "ollama"}}}))
+
+    with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(global_dir)}):
+        _clear_config_cache()
+        gc = get_global_config(project_dir=project_dir)
+        assert gc.llm.provider == "ollama"
+
+
+def test_get_global_config_project_overrides_multiple_sections(tmp_path):
+    """Project config can override multiple sections at once."""
+    global_dir = tmp_path / "global"
+    global_dir.mkdir()
+    project_dir = tmp_path / "project"
+    lore_dir = project_dir / ".lore"
+    lore_dir.mkdir(parents=True)
+
+    global_cfg = global_dir / "config.json"
+    global_cfg.write_text(
+        json.dumps(
+            {
+                "lore": {
+                    "llm": {"provider": "none"},
+                    "search": {"embedding_provider": "none"},
+                    "git": {"provider": "github"},
+                }
+            }
+        )
+    )
+    project_cfg = lore_dir / "config.json"
+    project_cfg.write_text(
+        json.dumps(
+            {
+                "lore": {
+                    "llm": {"provider": "ollama", "model": "phi4-mini"},
+                    "git": {"provider": "gitlab"},
+                }
+            }
+        )
+    )
+
+    with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(global_dir)}):
+        _clear_config_cache()
+        gc = get_global_config(project_dir=project_dir)
+        assert gc.llm.provider == "ollama"
+        assert gc.llm.model == "phi4-mini"
+        assert gc.search.embedding_provider == "none"
+        assert gc.git.provider == "gitlab"
+
+
+def test_get_global_config_no_project_dir_uses_cwd(tmp_path, monkeypatch):
+    """When project_dir is None, defaults to cwd."""
+    global_dir = tmp_path / "global"
+    global_dir.mkdir()
+    project_dir = tmp_path / "project"
+    lore_dir = project_dir / ".lore"
+    lore_dir.mkdir(parents=True)
+
+    global_cfg = global_dir / "config.json"
+    global_cfg.write_text(json.dumps({"lore": {"llm": {"provider": "none"}}}))
+    project_cfg = lore_dir / "config.json"
+    project_cfg.write_text(json.dumps({"lore": {"llm": {"provider": "ollama"}}}))
+
+    monkeypatch.chdir(project_dir)
+    with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(global_dir)}):
+        _clear_config_cache()
+        gc = get_global_config()
+        assert gc.llm.provider == "ollama"
+
+
+def test_get_global_config_no_cross_project_contamination(tmp_path):
+    """Calling with project A then project B must not leak A's values."""
+    global_dir = tmp_path / "global"
+    global_dir.mkdir()
+    proj_a = tmp_path / "a"
+    (proj_a / ".lore").mkdir(parents=True)
+    proj_b = tmp_path / "b"
+    (proj_b / ".lore").mkdir(parents=True)
+
+    (global_dir / "config.json").write_text(
+        json.dumps({"lore": {"llm": {"provider": "none", "model": "global"}}})
+    )
+    (proj_a / ".lore" / "config.json").write_text(
+        json.dumps({"lore": {"llm": {"provider": "ollama"}}})
+    )
+    (proj_b / ".lore" / "config.json").write_text(
+        json.dumps({"lore": {"git": {"provider": "gitlab"}}})
+    )
+
+    with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(global_dir)}):
+        _clear_config_cache()
+        gc_a = get_global_config(project_dir=proj_a)
+        assert gc_a.llm.provider == "ollama"
+
+        gc_b = get_global_config(project_dir=proj_b)
+        assert gc_b.llm.provider == "none"
+        assert gc_b.llm.model == "global"
+        assert gc_b.git.provider == "gitlab"
+
+
 def test_projects_array_readable(tmp_path):
     with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(tmp_path)}):
         _clear_config_cache()

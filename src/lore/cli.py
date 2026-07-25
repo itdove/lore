@@ -464,7 +464,7 @@ def _cmd_config(args: argparse.Namespace) -> int:
 
 
 def _cmd_config_show(args: argparse.Namespace) -> int:
-    from lore.config.loaders import _deep_merge
+    from lore.config.loaders import deep_merge
     from lore.config.utils import config_path
 
     use_global = getattr(args, "global_", False)
@@ -482,7 +482,7 @@ def _cmd_config_show(args: argparse.Namespace) -> int:
     elif use_project:
         data = project_data
     else:
-        data = _deep_merge(global_data, project_data)
+        data = deep_merge(global_data, project_data)
 
     print(json.dumps(data, indent=2))
     return 0
