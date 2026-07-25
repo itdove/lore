@@ -1031,3 +1031,112 @@ def test_query_hybrid_semantic_finds_no_keyword_match(store):
     # but vector search should find it
     results = store.query_hybrid("auth issues", query_embedding=query_emb, limit=5)
     assert any(r.key == "bug:auth:jwt" for r in results)
+
+
+def test_query_vector_min_similarity_filters_distant(store):
+    """Vector results below min_similarity threshold are dropped."""
+    from lore.embedding.base import embed_to_blob
+
+    close_emb = [0.9, 0.1, 0.0] + [0.0] * 5
+    far_emb = [0.0, 0.0, 0.9] + [0.0] * 5
+    query_emb = [0.85, 0.15, 0.05] + [0.0] * 5
+
+    store.store(
+        _make_entry(
+            key="bug:auth:jwt",
+            value="JWT token expiry",
+            embedding=embed_to_blob(close_emb),
+        )
+    )
+    store.store(
+        _make_entry(
+            key="convention:naming:snake",
+            value="Use snake_case",
+            embedding=embed_to_blob(far_emb),
+        )
+    )
+
+    results_no_cutoff = store.query_vector(query_emb, limit=10, min_similarity=0.0)
+    assert len(results_no_cutoff) == 2
+
+    results_with_cutoff = store.query_vector(query_emb, limit=10, min_similarity=0.5)
+    keys = [r[0].key for r in results_with_cutoff]
+    assert "bug:auth:jwt" in keys
+    assert "convention:naming:snake" not in keys
+
+
+def test_query_vector_min_similarity_keeps_close_results(store):
+    """Results above min_similarity threshold are kept."""
+    from lore.embedding.base import embed_to_blob
+
+    emb = [0.9, 0.1, 0.0] + [0.0] * 5
+    store.store(
+        _make_entry(
+            key="bug:auth:jwt",
+            value="JWT issues",
+            embedding=embed_to_blob(emb),
+        )
+    )
+
+    results = store.query_vector(emb, limit=10, min_similarity=0.99)
+    assert len(results) == 1
+    assert results[0][0].key == "bug:auth:jwt"
+
+
+def test_query_hybrid_min_similarity_filters_vector_noise(store):
+    """Hybrid search with min_similarity filters irrelevant vector results."""
+    from lore.embedding.base import embed_to_blob
+
+    jwt_emb = [0.9, 0.1, 0.0] + [0.0] * 5
+    snake_emb = [0.0, 0.0, 0.9] + [0.0] * 5
+    flask_emb = [0.0, 0.9, 0.0] + [0.0] * 5
+    query_emb = [0.85, 0.15, 0.05] + [0.0] * 5
+
+    store.store(
+        _make_entry(
+            key="bug:auth:jwt",
+            value="JWT token clock skew",
+            embedding=embed_to_blob(jwt_emb),
+        )
+    )
+    store.store(
+        _make_entry(
+            key="convention:naming:snake",
+            value="Use snake_case naming",
+            embedding=embed_to_blob(snake_emb),
+        )
+    )
+    store.store(
+        _make_entry(
+            key="decision:arch:flask",
+            value="FastAPI over Flask decision",
+            embedding=embed_to_blob(flask_emb),
+        )
+    )
+
+    results_no_cutoff = store.query_hybrid(
+        "jwt authentication", query_embedding=query_emb, limit=10, min_similarity=0.0
+    )
+    results_with_cutoff = store.query_hybrid(
+        "jwt authentication", query_embedding=query_emb, limit=10, min_similarity=0.5
+    )
+
+    assert len(results_with_cutoff) <= len(results_no_cutoff)
+    if results_with_cutoff:
+        assert results_with_cutoff[0].key == "bug:auth:jwt"
+
+
+def test_query_hybrid_fts_results_unaffected_by_min_similarity(store):
+    """FTS-only results (no embedding) are not filtered by min_similarity."""
+    store.store(
+        _make_entry(
+            key="bug:auth:jwt",
+            value="JWT token expiry causes auth failures",
+        )
+    )
+
+    results = store.query_hybrid(
+        "JWT token", query_embedding=None, limit=5, min_similarity=0.99
+    )
+    assert len(results) == 1
+    assert results[0].key == "bug:auth:jwt"

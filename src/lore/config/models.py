@@ -31,11 +31,16 @@ class SearchConfig:
     embedding_model: str | None = None
     embedding_base_url: str | None = None
     dedup_threshold: float = 0.20
+    min_similarity: float = 0.3
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.dedup_threshold <= 1.0:
             raise ValueError(
                 f"dedup_threshold must be in [0, 1], got {self.dedup_threshold}"
+            )
+        if not 0.0 <= self.min_similarity <= 1.0:
+            raise ValueError(
+                f"min_similarity must be in [0, 1], got {self.min_similarity}"
             )
 
 

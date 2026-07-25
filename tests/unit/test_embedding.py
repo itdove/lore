@@ -146,3 +146,20 @@ def test_factory_unknown_raises():
     with unittest.mock.patch("lore.config.manager.get_global_config", return_value=cfg):
         with pytest.raises(ValueError, match="Unknown embedding provider"):
             get_embedding_provider()
+
+
+def test_search_config_min_similarity_default():
+    sc = SearchConfig()
+    assert sc.min_similarity == 0.3
+
+
+def test_search_config_min_similarity_custom():
+    sc = SearchConfig(min_similarity=0.5)
+    assert sc.min_similarity == 0.5
+
+
+def test_search_config_min_similarity_invalid():
+    with pytest.raises(ValueError, match="min_similarity must be in"):
+        SearchConfig(min_similarity=1.5)
+    with pytest.raises(ValueError, match="min_similarity must be in"):
+        SearchConfig(min_similarity=-0.1)
