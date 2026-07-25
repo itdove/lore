@@ -3,7 +3,11 @@ from __future__ import annotations
 import warnings
 from pathlib import Path
 
-from lore.config.loaders import load_global_config, load_project_config
+from lore.config.loaders import (
+    deep_merge,
+    load_global_config,
+    load_project_config,
+)
 from lore.config.models import (
     GitConfig,
     GlobalConfig,
@@ -14,6 +18,8 @@ from lore.config.models import (
     StoreConfig,
     SyncConfig,
 )
+
+_GLOBAL_ONLY_KEYS = frozenset(("search",))
 
 
 def _parse_sub_config(cls, data: dict | None):
@@ -31,9 +37,17 @@ def _parse_sub_config(cls, data: dict | None):
     return cls(**{k: v for k, v in data.items() if k in valid_fields})
 
 
-def get_global_config() -> GlobalConfig:
+def get_global_config(project_dir: Path | None = None) -> GlobalConfig:
     raw = load_global_config()
     lore = raw.get("lore", {})
+
+    project_raw = load_project_config(project_dir or Path.cwd())
+    project_overlay = {
+        k: v
+        for k, v in project_raw.get("lore", {}).items()
+        if k not in _GLOBAL_ONLY_KEYS
+    }
+    lore = deep_merge(lore, project_overlay)
 
     return GlobalConfig(
         projects=lore.get("projects", []),

@@ -36,11 +36,11 @@ def _load_json(path: Path) -> dict:
         return {}
 
 
-def _deep_merge(base: dict, override: dict) -> dict:
+def deep_merge(base: dict, override: dict) -> dict:
     result = base.copy()
     for key, value in override.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value)
+            result[key] = deep_merge(result[key], value)
         else:
             result[key] = value
     return result
@@ -54,7 +54,7 @@ def _load_global_config_raw() -> dict:
     if inline:
         try:
             overlay = json.loads(inline)
-            data = _deep_merge(data, overlay)
+            data = deep_merge(data, overlay)
         except json.JSONDecodeError:
             pass
 

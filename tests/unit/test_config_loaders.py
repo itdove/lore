@@ -5,8 +5,8 @@ from unittest import mock
 
 from lore.config.loaders import (
     _clear_config_cache,
-    _deep_merge,
     _load_json,
+    deep_merge,
     load_global_config,
     load_project_config,
 )
@@ -29,17 +29,17 @@ def test_load_json_valid(tmp_path):
 
 
 def test_deep_merge_scalars():
-    assert _deep_merge({"a": 1}, {"a": 2}) == {"a": 2}
+    assert deep_merge({"a": 1}, {"a": 2}) == {"a": 2}
 
 
 def test_deep_merge_nested():
     base = {"a": {"b": 1, "c": 2}}
     override = {"a": {"c": 3, "d": 4}}
-    assert _deep_merge(base, override) == {"a": {"b": 1, "c": 3, "d": 4}}
+    assert deep_merge(base, override) == {"a": {"b": 1, "c": 3, "d": 4}}
 
 
 def test_deep_merge_new_keys():
-    assert _deep_merge({"a": 1}, {"b": 2}) == {"a": 1, "b": 2}
+    assert deep_merge({"a": 1}, {"b": 2}) == {"a": 1, "b": 2}
 
 
 def test_load_global_config_missing_file():
