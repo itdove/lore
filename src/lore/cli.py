@@ -290,7 +290,7 @@ def _cmd_sync(args: argparse.Namespace) -> int:
             return 0
 
     try:
-        result = run_sync(_get_store())
+        result = run_sync(_get_store(), force=getattr(args, "force", False))
 
         print(
             f"Sync complete: {result.created} created, {result.updated} updated, "

@@ -16,10 +16,13 @@ class RepoSyncState:
 
 
 class SyncStateManager:
-    def __init__(self, state_path: Path) -> None:
+    def __init__(self, state_path: Path, *, force: bool = False) -> None:
         self._path = state_path
+        self._force = force
 
     def load(self) -> dict[str, RepoSyncState]:
+        if self._force:
+            return {}
         if not self._path.exists():
             return {}
         try:
