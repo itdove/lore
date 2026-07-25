@@ -25,7 +25,7 @@ def blob_to_embed(blob: bytes) -> list[float]:
     return list(struct.unpack(f"{n}f", blob))
 
 
-# For large DBs (>10K entries), replace with sqlite-vec's vec_distance_cosine().
+# Pure-Python fallback. Store queries use sqlite-vec's vec_distance_cosine().
 def cosine_distance(a: list[float], b: list[float]) -> float:
     if len(a) != len(b):
         return 1.0
