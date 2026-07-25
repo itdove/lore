@@ -88,7 +88,7 @@ def test_init_with_hierarchy(tmp_path):
     project_dir = tmp_path / "myproject"
     project_dir.mkdir()
 
-    inputs = ["1", "https://github.com/org/knowledge.git", "main", "team"]
+    inputs = ["1", "https://github.com/org/knowledge.git", "main", "team", "y"]
     with mock.patch("lore.cli.input", side_effect=inputs):
         with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
             with mock.patch("lore.cli._cmd_sync", return_value=0):

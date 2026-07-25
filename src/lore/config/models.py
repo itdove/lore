@@ -9,6 +9,7 @@ class HierarchyLevel:
     repo: str
     branch: str = "main"
     name: str | None = None
+    writable: bool = True
 
 
 @dataclass

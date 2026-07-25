@@ -76,6 +76,34 @@ class TestCrudScopeEnforcement:
         existing = store.get_by_key_and_level("test:crud:dup", 0)
         assert existing is not None
 
+    def test_delete_shared_entry_rejected(self):
+        store = get_dashboard_store()
+        entry = KnowledgeEntry(
+            key="test:crud:shared",
+            value="shared value",
+            level=1,
+            level_name="team",
+        )
+        store.store(entry)
+        with pytest.raises(KeyError):
+            store.delete("test:crud:shared", reason="test", actor="dashboard", level=0)
+        result = store.get_by_key_and_level("test:crud:shared", 1)
+        assert result is not None
+
+    def test_delete_records_history(self):
+        store = get_dashboard_store()
+        entry = KnowledgeEntry(
+            key="test:crud:delhist",
+            value="will delete",
+            level=0,
+        )
+        entry_id = store.store(entry)
+        store.delete("test:crud:delhist", reason="cleanup", actor="dashboard", level=0)
+        history = store.get_history(entry_id)
+        actions = [h.action for h in history]
+        assert "deleted" in actions
+        assert any(h.reason == "cleanup" for h in history)
+
 
 class TestConflictResolution:
     def _create_conflict_pair(self, store):

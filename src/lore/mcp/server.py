@@ -101,15 +101,26 @@ def _create_shared_pr(
         return None
 
 
-def _resolve_level(level_name: str) -> tuple[int, str, str | None, str | None]:
+def _resolve_level(
+    level_name: str,
+) -> tuple[int, str, str | None, str | None, bool]:
     if level_name == "individual":
-        return 0, "individual", None, None
+        return 0, "individual", None, None, True
     cfg = get_project_config()
     for h in cfg.hierarchy:
         if h.name == level_name:
-            return h.level, level_name, h.repo, h.branch
+            return h.level, level_name, h.repo, h.branch, h.writable
     available = ["individual"] + [h.name for h in cfg.hierarchy if h.name]
     raise ValueError(f"Unknown level '{level_name}'. Available: {available}")
+
+
+def _assert_writable(level_name: str, writable: bool) -> None:
+    if not writable:
+        raise ValueError(
+            f"Level '{level_name}' is read-only. "
+            "Knowledge at this level is maintained via "
+            "git commits to the knowledge repo."
+        )
 
 
 def create_server() -> FastMCP:
@@ -276,7 +287,8 @@ def create_server() -> FastMCP:
             PR URL for shared levels via GitInterface).
         """
         _validate_key(key)
-        level_int, level_name, repo_url, repo_branch = _resolve_level(level)
+        level_int, level_name, repo_url, repo_branch, writable = _resolve_level(level)
+        _assert_writable(level, writable)
         store = _get_store()
         cfg = get_global_config()
 
@@ -291,7 +303,10 @@ def create_server() -> FastMCP:
                     )
                     if dupes:
                         closest, dist = dupes[0]
-                        if dist < cfg.search.dedup_threshold:
+                        if (
+                            dist < cfg.search.dedup_threshold
+                            and closest.level == level_int
+                        ):
                             store.update(
                                 closest.key,
                                 closest.value,
@@ -373,7 +388,8 @@ def create_server() -> FastMCP:
             PR URL for shared levels).
         """
         _validate_key(key)
-        level_int, level_name, repo_url, repo_branch = _resolve_level(level)
+        level_int, level_name, repo_url, repo_branch, writable = _resolve_level(level)
+        _assert_writable(level, writable)
         store = _get_store()
         existing = store.get_by_key_and_level(key, level_int)
         if existing is None:
@@ -418,7 +434,8 @@ def create_server() -> FastMCP:
         Returns:
             Confirmation of deletion, or error for shared entries.
         """
-        level_int, _, _, _ = _resolve_level(level)
+        level_int, _, _, _, writable = _resolve_level(level)
+        _assert_writable(level, writable)
         store = _get_store()
         existing = store.get_by_key_and_level(key, level_int)
         if existing is None:

@@ -41,6 +41,7 @@ def create_app() -> None:
                 create_tab = ui.tab("create", label="New Entry", icon="add_circle")
                 conflicts_tab = ui.tab("conflicts", label="Conflicts", icon="warning")
                 sync_tab = ui.tab("sync", label="Sync", icon="sync")
+                config_tab = ui.tab("config", label="Config", icon="settings")
 
         with ui.tab_panels(tabs, value=overview_tab).classes("w-full h-full"):
             with ui.tab_panel(overview_tab):
@@ -67,3 +68,8 @@ def create_app() -> None:
                 from lore.dashboard.pages.sync import render_sync
 
                 render_sync()
+
+            with ui.tab_panel(config_tab):
+                from lore.dashboard.pages.config_editor import render_config
+
+                render_config()

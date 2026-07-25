@@ -70,6 +70,8 @@ def _prompt_hierarchy_interactive() -> list[dict]:
                 continue
             branch = input("  Branch [main]: ").strip() or "main"
             name = input("  Name (optional): ").strip() or None
+            writable_str = input("  Writable by agents? [Y/n]: ").strip().lower()
+            writable = writable_str not in ("n", "no")
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -77,6 +79,8 @@ def _prompt_hierarchy_interactive() -> list[dict]:
         entry: dict = {"level": i, "repo": repo, "branch": branch}
         if name:
             entry["name"] = name
+        if not writable:
+            entry["writable"] = False
         hierarchy.append(entry)
 
     return hierarchy
@@ -525,7 +529,7 @@ def _cmd_config_show(args: argparse.Namespace) -> int:
 
 
 def _cmd_config_set(args: argparse.Namespace) -> int:
-    from lore.config.loaders import _clear_config_cache
+    from lore.config.loaders import save_config
 
     path = _resolve_config_path(getattr(args, "global_", False))
     if path is None:
@@ -535,8 +539,7 @@ def _cmd_config_set(args: argparse.Namespace) -> int:
     keys = args.key.split(".")
     value = _parse_value(args.value)
     _set_nested(data, keys, value)
-    _write_json_file(path, data)
-    _clear_config_cache()
+    save_config(path, data)
     print(f"Set {args.key} = {json.dumps(value)}")
     return 0
 
@@ -545,7 +548,7 @@ def _cmd_config_edit(args: argparse.Namespace) -> int:
     import os
     import subprocess
 
-    from lore.config.loaders import _clear_config_cache
+    from lore.config.loaders import _clear_config_cache  # noqa: F811
 
     path = _resolve_config_path(getattr(args, "global_", False))
     if path is None:

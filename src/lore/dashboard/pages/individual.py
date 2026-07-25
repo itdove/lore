@@ -102,6 +102,7 @@ def show_edit_dialog(entry: KnowledgeEntry) -> None:
             )
             ui.notify(f"Updated: {entry.key}", type="positive")
             dialog.close()
+            ui.navigate.reload()
 
         with ui.row().classes("q-gutter-sm q-mt-md"):
             ui.button("Save", icon="save", on_click=save).props("color=primary")
@@ -134,6 +135,7 @@ def show_delete_dialog(entry: KnowledgeEntry) -> None:
             store.delete(entry.key, reason=reason, actor="dashboard", level=0)
             ui.notify(f"Deleted: {entry.key}", type="positive")
             dialog.close()
+            ui.navigate.reload()
 
         with ui.row().classes("q-gutter-sm q-mt-md"):
             ui.button("Delete", icon="delete", on_click=confirm_delete).props(

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
+from lore.config.loaders import save_config
+from lore.config.utils import config_path
 from lore.store.base import KnowledgeEntry, validate_key  # noqa: F401
 from lore.store.sqlite import SQLiteStore
 
@@ -66,6 +69,55 @@ def build_repo_file_url(entry: KnowledgeEntry) -> str | None:
         return f"{url}/-/blob/{branch}/{file_path}"
 
     return f"{url}/blob/{branch}/{file_path}"
+
+
+def is_level_writable(level: int) -> bool:
+    if level == 0:
+        return True
+    try:
+        from lore.config.manager import get_project_config
+
+        cfg = get_project_config()
+        for h in cfg.hierarchy:
+            if h.level == level:
+                return h.writable
+    except (FileNotFoundError, KeyError, ValueError):
+        pass
+    except Exception:
+        logger.warning(
+            "Failed to load project config for writable check", exc_info=True
+        )
+    return True
+
+
+def _global_config_path():
+    return config_path()
+
+
+def _project_config_path():
+    return Path.cwd() / ".lore" / "config.json"
+
+
+def load_raw_global_config() -> dict:
+    path = _global_config_path()
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_raw_project_config() -> dict:
+    path = _project_config_path()
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def save_global_config(data: dict) -> None:
+    save_config(_global_config_path(), data)
+
+
+def save_project_config(data: dict) -> None:
+    save_config(_project_config_path(), data)
 
 
 def promote_entry(entry: KnowledgeEntry) -> dict:

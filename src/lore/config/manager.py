@@ -79,6 +79,7 @@ def get_project_config(project_dir: str | Path | None = None) -> ProjectConfig:
                 repo=entry["repo"],
                 branch=entry.get("branch", "main"),
                 name=entry.get("name"),
+                writable=entry.get("writable", True),
             )
         )
 
