@@ -170,6 +170,7 @@ class StoreBackend(ABC):
         filter_levels: list[int] | None = None,
         filter_repos: list[tuple[str, str]] | None = None,
         include_negated: bool = False,
+        min_similarity: float = 0.0,
     ) -> list[tuple[KnowledgeEntry, float]]: ...
 
     @abstractmethod
@@ -181,4 +182,5 @@ class StoreBackend(ABC):
         filter_levels: list[int] | None = None,
         filter_repos: list[tuple[str, str]] | None = None,
         include_negated: bool = False,
+        min_similarity: float = 0.0,
     ) -> list[KnowledgeEntry]: ...

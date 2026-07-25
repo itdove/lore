@@ -129,6 +129,31 @@ Once the MCP server is registered, AI agents have access to:
 | `list_conflicts` | Show all conflicting entries with both sides linked |
 | `health_check` | Entry counts per level, conflict count, staleness info |
 
+### Vector Search Performance
+
+Lore uses [sqlite-vec](https://github.com/asg017/sqlite-vec) for SQL-level cosine distance when available. If the Python build lacks SQLite extension loading support, Lore falls back to a pure-Python implementation automatically.
+
+**macOS (pyenv):** The default build links against macOS system SQLite, which omits `load_extension`. Rebuild Python to enable sqlite-vec:
+
+```bash
+brew install sqlite
+LDFLAGS="-L$(brew --prefix sqlite)/lib" \
+CPPFLAGS="-I$(brew --prefix sqlite)/include" \
+pyenv install 3.12 --force
+```
+
+**macOS (uv):** uv uses python-build-standalone binaries which also lack extension loading. Use uv with a pyenv-built Python instead:
+
+```bash
+brew install sqlite
+LDFLAGS="-L$(brew --prefix sqlite)/lib" \
+CPPFLAGS="-I$(brew --prefix sqlite)/include" \
+pyenv install 3.12
+uv venv --python $(pyenv prefix 3.12)/bin/python
+```
+
+**Linux:** Most distributions ship Python with extension loading enabled — no extra steps needed.
+
 ### Running Tests
 
 ```bash

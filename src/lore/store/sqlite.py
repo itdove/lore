@@ -5,12 +5,15 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 
-from lore.embedding.base import blob_to_embed, cosine_distance
+import sqlite_vec
+
+from lore.embedding.base import blob_to_embed, cosine_distance, embed_to_blob
 from lore.store.base import HistoryRecord, KnowledgeEntry, StoreBackend
 
 log = logging.getLogger("lore.store")
 
 _RRF_K = 60
+_VEC_LOADED = False
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS knowledge (
@@ -100,6 +103,12 @@ def create_schema(
         if db_path_or_conn != ":memory:":
             conn.execute("PRAGMA journal_mode=WAL")
 
+    global _VEC_LOADED
+    try:
+        sqlite_vec.load(conn)
+        _VEC_LOADED = True
+    except AttributeError:
+        pass
     conn.executescript(_SCHEMA_SQL)
     return conn
 
@@ -593,25 +602,39 @@ class SQLiteStore(StoreBackend):
             filter_levels, filter_repos, include_negated
         )
         conditions.insert(0, "embedding IS NOT NULL")
-
+        max_distance = 1.0 - min_similarity
         where = " AND ".join(conditions)
-        sql = f"SELECT * FROM knowledge WHERE {where}"
 
+        if _VEC_LOADED:
+            query_blob = embed_to_blob(embedding)
+            sql = (
+                f"SELECT *, distance FROM ("
+                f"SELECT *, vec_distance_cosine(embedding, ?) AS distance "
+                f"FROM knowledge WHERE {where}"
+                f") WHERE distance <= ? "
+                f"ORDER BY distance ASC LIMIT ?"
+            )
+            try:
+                rows = self._conn.execute(
+                    sql, [query_blob] + params + [max_distance, limit]
+                ).fetchall()
+            except sqlite3.OperationalError as exc:
+                log.warning("Vector search failed: %s", exc)
+                return []
+            return [(self._row_to_entry(row), row["distance"]) for row in rows]
+
+        sql = f"SELECT * FROM knowledge WHERE {where}"
         try:
             rows = self._conn.execute(sql, params).fetchall()
         except sqlite3.OperationalError as exc:
             log.warning("Vector search failed: %s", exc)
             return []
-
-        max_distance = 1.0 - min_similarity
         scored = []
         for row in rows:
-            entry = self._row_to_entry(row)
             stored = blob_to_embed(row["embedding"])
             dist = cosine_distance(embedding, stored)
             if dist <= max_distance:
-                scored.append((entry, dist))
-
+                scored.append((self._row_to_entry(row), dist))
         scored.sort(key=lambda x: x[1])
         return scored[:limit]
 

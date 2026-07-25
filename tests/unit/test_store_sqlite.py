@@ -871,6 +871,24 @@ def test_health_negated_count(store):
 # --- Hybrid search ---
 
 
+def test_create_schema_tries_sqlite_vec():
+    """create_schema attempts to load sqlite-vec extension."""
+    import lore.store.sqlite as mod
+
+    conn = create_schema(":memory:")
+    if mod._VEC_LOADED:
+        from lore.embedding.base import embed_to_blob
+
+        blob = embed_to_blob([1.0, 2.0, 3.0])
+        result = conn.execute(
+            "SELECT vec_distance_cosine(?, ?) AS dist", (blob, blob)
+        ).fetchone()
+        assert result[0] == pytest.approx(0.0, abs=1e-6)
+    else:
+        with pytest.raises(sqlite3.OperationalError):
+            conn.execute("SELECT vec_distance_cosine(X'00000000', X'00000000')")
+
+
 def test_query_vector_returns_closest(store):
     """Vector search returns entries sorted by cosine distance."""
     from lore.embedding.base import embed_to_blob
