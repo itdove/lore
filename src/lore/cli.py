@@ -310,9 +310,12 @@ def _cmd_sync(args: argparse.Namespace) -> int:
 
 
 def _cmd_search(args: argparse.Namespace) -> int:
-    from lore.config.manager import get_project_config
+    import logging
+
+    from lore.config.manager import get_global_config, get_project_config
     from lore.store.priority import resolve_priority
 
+    logger = logging.getLogger(__name__)
     store = _get_store()
 
     try:
@@ -323,8 +326,26 @@ def _cmd_search(args: argparse.Namespace) -> int:
 
     filter_levels, filter_repos = _build_hierarchy_filters(project_cfg.hierarchy)
 
-    raw = store.query_fts(
-        args.topic, limit=50, filter_levels=filter_levels, filter_repos=filter_repos
+    query_embedding = None
+    cfg = get_global_config()
+    if cfg.search.embedding_provider != "none":
+        try:
+            from lore.embedding import get_embedding_provider
+
+            query_embedding = get_embedding_provider().embed(args.topic)
+        except Exception:
+            logger.warning(
+                "Embedding failed for query %r, falling back to FTS",
+                args.topic,
+                exc_info=True,
+            )
+
+    raw = store.query_hybrid(
+        args.topic,
+        query_embedding=query_embedding,
+        limit=50,
+        filter_levels=filter_levels,
+        filter_repos=filter_repos,
     )
     resolved = resolve_priority(raw)
 

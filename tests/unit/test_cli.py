@@ -311,6 +311,122 @@ def test_search_priority_resolution(store, capsys):
     assert out.count("conv:naming") == 1
 
 
+def test_search_uses_hybrid_when_embedding_configured(store, capsys):
+    from lore.cli import _cmd_search
+
+    store.store(
+        _make_entry(
+            key="bug:auth:jwt",
+            value="JWT expiry off by one",
+            level=1,
+            level_name="team",
+        )
+    )
+
+    fake_cfg = mock.MagicMock()
+    fake_cfg.search.embedding_provider = "ollama"
+
+    fake_embedding = [0.1] * 384
+
+    with mock.patch("lore.cli._get_store", return_value=store):
+        with mock.patch(
+            "lore.config.manager.get_project_config",
+            return_value=mock.MagicMock(hierarchy=[]),
+        ):
+            with mock.patch(
+                "lore.config.manager.get_global_config", return_value=fake_cfg
+            ):
+                with mock.patch(
+                    "lore.embedding.get_embedding_provider"
+                ) as mock_provider:
+                    mock_provider.return_value.embed.return_value = fake_embedding
+                    with mock.patch.object(
+                        store, "query_hybrid", wraps=store.query_hybrid
+                    ) as mock_hybrid:
+                        rc = _cmd_search(argparse.Namespace(topic="JWT"))
+
+    assert rc == 0
+    mock_hybrid.assert_called_once()
+    call_kwargs = mock_hybrid.call_args
+    assert call_kwargs[1]["query_embedding"] == fake_embedding
+
+
+def test_search_falls_back_to_fts_when_no_embedding(store, capsys):
+    from lore.cli import _cmd_search
+
+    store.store(
+        _make_entry(
+            key="bug:auth:jwt",
+            value="JWT expiry off by one",
+            level=1,
+            level_name="team",
+        )
+    )
+
+    fake_cfg = mock.MagicMock()
+    fake_cfg.search.embedding_provider = "none"
+
+    with mock.patch("lore.cli._get_store", return_value=store):
+        with mock.patch(
+            "lore.config.manager.get_project_config",
+            return_value=mock.MagicMock(hierarchy=[]),
+        ):
+            with mock.patch(
+                "lore.config.manager.get_global_config", return_value=fake_cfg
+            ):
+                with mock.patch.object(
+                    store, "query_hybrid", wraps=store.query_hybrid
+                ) as mock_hybrid:
+                    rc = _cmd_search(argparse.Namespace(topic="JWT"))
+
+    assert rc == 0
+    mock_hybrid.assert_called_once()
+    assert mock_hybrid.call_args[1]["query_embedding"] is None
+    out = capsys.readouterr().out
+    assert "bug:auth:jwt" in out
+
+
+def test_search_embedding_failure_falls_back_to_fts(store, capsys):
+    from lore.cli import _cmd_search
+
+    store.store(
+        _make_entry(
+            key="bug:auth:jwt",
+            value="JWT expiry off by one",
+            level=1,
+            level_name="team",
+        )
+    )
+
+    fake_cfg = mock.MagicMock()
+    fake_cfg.search.embedding_provider = "ollama"
+
+    with mock.patch("lore.cli._get_store", return_value=store):
+        with mock.patch(
+            "lore.config.manager.get_project_config",
+            return_value=mock.MagicMock(hierarchy=[]),
+        ):
+            with mock.patch(
+                "lore.config.manager.get_global_config", return_value=fake_cfg
+            ):
+                with mock.patch(
+                    "lore.embedding.get_embedding_provider"
+                ) as mock_provider:
+                    mock_provider.return_value.embed.side_effect = ConnectionError(
+                        "Ollama unavailable"
+                    )
+                    with mock.patch.object(
+                        store, "query_hybrid", wraps=store.query_hybrid
+                    ) as mock_hybrid:
+                        rc = _cmd_search(argparse.Namespace(topic="JWT"))
+
+    assert rc == 0
+    mock_hybrid.assert_called_once()
+    assert mock_hybrid.call_args[1]["query_embedding"] is None
+    out = capsys.readouterr().out
+    assert "bug:auth:jwt" in out
+
+
 # =====================================================================
 # lore conflicts
 # =====================================================================
