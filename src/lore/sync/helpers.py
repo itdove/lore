@@ -24,7 +24,7 @@ def get_sync_status_dict() -> dict:
     }
 
 
-def run_sync(store):
+def run_sync(store, *, force: bool = False):
     from lore.config.manager import get_global_config
     from lore.config.utils import (
         repos_cache_path,
@@ -39,7 +39,7 @@ def run_sync(store):
     from lore.sync.state import SyncStateManager
 
     config = get_global_config()
-    state_mgr = SyncStateManager(sync_state_path())
+    state_mgr = SyncStateManager(sync_state_path(), force=force)
 
     with SyncLockManager(sync_lock_path()):
         git_mgr = GitRepoManager(repos_cache_path())

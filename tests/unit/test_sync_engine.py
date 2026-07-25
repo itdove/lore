@@ -560,3 +560,72 @@ def test_sync_conflict_higher_level_wins(sync_env):
     team_entry = sync_env["store"].get_by_key_and_level("api:rate", 3)
     assert team_entry.conflict_status == "active"
     assert org_entry.conflict_status == "overridden"
+
+
+# --- Force sync tests ---
+
+
+def _force_engine(sync_env):
+    """Build a SyncEngine with force=True state manager."""
+    state_mgr = SyncStateManager(sync_env["state"] / "sync-state.json", force=True)
+    return SyncEngine(
+        sync_env["store"],
+        sync_env["git_mgr"],
+        state_mgr,
+        SyncLogWriter(sync_env["state"] / "sync.md"),
+    )
+
+
+def test_sync_force_reprocesses_unchanged(sync_env):
+    """force=True re-upserts files even when content hash matches."""
+    repo = "github.com/org/k"
+    branch = "main"
+    content = "---\ntags: [x]\n---\nStable.\n"
+    _setup_repo(sync_env["cache"], repo, branch, {"topic/a.md": content})
+    hierarchy = [{"level": 1, "repo": repo, "branch": branch}]
+
+    with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
+        r1 = sync_env["engine"].sync_all(["/fake"])
+
+    assert r1.created == 1
+
+    force_engine = _force_engine(sync_env)
+    with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
+        r2 = force_engine.sync_all(["/fake"])
+
+    assert r2.updated == 1
+
+
+def test_sync_force_regenerates_embeddings(sync_env):
+    """force=True calls embedding provider for unchanged files."""
+    repo = "github.com/org/k"
+    branch = "main"
+    content = "---\ntags: [x]\n---\nStable.\n"
+    _setup_repo(sync_env["cache"], repo, branch, {"topic/a.md": content})
+    hierarchy = [{"level": 1, "repo": repo, "branch": branch}]
+
+    with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
+        sync_env["engine"].sync_all(["/fake"])
+
+    mock_provider = mock.MagicMock()
+    mock_provider.embed_batch.return_value = [[0.1, 0.2, 0.3]]
+
+    force_engine = _force_engine(sync_env)
+    with (
+        _mock_project_config(hierarchy),
+        _mock_clone_or_pull(sync_env["git_mgr"]),
+        mock.patch(
+            "lore.sync.engine.get_embedding_provider", return_value=mock_provider
+        ),
+        mock.patch(
+            "lore.sync.engine.get_global_config",
+            return_value=mock.MagicMock(
+                search=mock.MagicMock(embedding_provider="ollama"),
+                projects=["/fake"],
+            ),
+        ),
+    ):
+        r = force_engine.sync_all(["/fake"])
+
+    assert r.updated == 1
+    mock_provider.embed_batch.assert_called_once()

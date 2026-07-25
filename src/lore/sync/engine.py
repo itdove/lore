@@ -64,9 +64,6 @@ class SyncEngine:
             current_keys: set[str] = set()
             new_hashes: dict[str, str] = {}
 
-            all_keys = {pf.key for pf in parsed_files}
-            conflicts_by_key = self._store.find_conflicts_batch(all_keys, level)
-
             old_state = sync_states.get(repo_hash)
             changed: list[ParsedFile] = []
             for pf in parsed_files:
@@ -78,6 +75,9 @@ class SyncEngine:
                 ):
                     continue
                 changed.append(pf)
+
+            changed_keys = {pf.key for pf in changed}
+            conflicts_by_key = self._store.find_conflicts_batch(changed_keys, level)
 
             embeddings = self._batch_embed(changed, emb_provider)
 
