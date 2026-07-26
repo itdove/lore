@@ -7,7 +7,9 @@ import urllib.error
 import urllib.request
 
 from lore.llm.base import (
+    DOC_CHUNK_PROMPT,
     SYNTHESIS_PROMPTS,
+    DocChunkExtraction,
     KnowledgeCandidate,
     LLMProvider,
 )
@@ -81,6 +83,54 @@ class OllamaProvider(LLMProvider):
         if not raw:
             return []
         return _parse_candidates(raw)
+
+    def extract_from_chunk(
+        self,
+        chunk_text: str,
+        heading: str,
+        source_file: str,
+    ) -> list[DocChunkExtraction]:
+        prompt = (
+            f"{DOC_CHUNK_PROMPT}\n\n"
+            f"Source file: {source_file}\n"
+            f"Section heading: {heading or '(no heading)'}\n\n"
+            f"Document section:\n{chunk_text}"
+        )
+        raw = self._generate(prompt)
+        if not raw:
+            return []
+        return _parse_doc_extractions(raw)
+
+
+def _parse_doc_extractions(raw: str) -> list[DocChunkExtraction]:
+    text = re.sub(r"```(?:json)?\s*", "", raw).strip()
+    match = re.search(r"\[.*\]", text, re.DOTALL)
+    if not match:
+        log.warning("No JSON array found in LLM doc extraction response")
+        return []
+    try:
+        items = json.loads(match.group())
+    except json.JSONDecodeError:
+        log.warning("Failed to parse JSON from LLM doc extraction response")
+        return []
+    results: list[DocChunkExtraction] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("key")
+        summary = item.get("summary") or item.get("value", "")
+        if not key or not summary:
+            continue
+        results.append(
+            DocChunkExtraction(
+                key=key,
+                summary=summary,
+                tags=item.get("tags", []),
+                content_type=item.get("content_type", "general"),
+                suggested_level=item.get("suggested_level", "individual"),
+            )
+        )
+    return results
 
 
 def _parse_candidates(raw: str) -> list[KnowledgeCandidate]:

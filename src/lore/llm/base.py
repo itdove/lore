@@ -16,6 +16,15 @@ class KnowledgeCandidate:
     negate_reason: str | None = None
 
 
+@dataclass
+class DocChunkExtraction:
+    key: str
+    summary: str
+    tags: list[str] = field(default_factory=list)
+    content_type: str = "general"
+    suggested_level: str = "individual"
+
+
 class LLMProvider(ABC):
     @abstractmethod
     def synthesize(self, topic: str, candidates: list[KnowledgeEntry]) -> str: ...
@@ -27,6 +36,14 @@ class LLMProvider(ABC):
         existing: list[KnowledgeEntry],
         project_config=None,
     ) -> list[KnowledgeCandidate]: ...
+
+    @abstractmethod
+    def extract_from_chunk(
+        self,
+        chunk_text: str,
+        heading: str,
+        source_file: str,
+    ) -> list[DocChunkExtraction]: ...
 
 
 SYNTHESIS_PROMPTS = {
@@ -41,6 +58,23 @@ SYNTHESIS_PROMPTS = {
         "Respect priority hierarchy. Attribute facts to their source level."
     ),
 }
+
+DOC_CHUNK_PROMPT = (
+    "You are a knowledge extraction assistant.\n"
+    "From this document section, extract structured knowledge entries.\n"
+    "\n"
+    "For each distinct piece of knowledge, provide:\n"
+    "- key: colon-separated hierarchical key (e.g., guide:deployment:k8s-setup)\n"
+    "  Use format type:domain:slug where type is one of:\n"
+    "  decision, convention, pattern, bug, guide, reference\n"
+    "- summary: concise knowledge entry (include WHY, not just WHAT)\n"
+    "- tags: relevant tags as a list\n"
+    "- content_type: one of decision, convention, bug_pattern, general\n"
+    "- suggested_level: individual, team, or org\n"
+    "\n"
+    "Skip: table of contents, boilerplate headers, navigation links.\n"
+    "Output as JSON array."
+)
 
 CAPTURE_PROMPT_BASE = (
     "You are a knowledge extraction assistant.\n"

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from lore.llm.base import KnowledgeCandidate, LLMProvider
+from lore.llm.base import DocChunkExtraction, KnowledgeCandidate, LLMProvider
 from lore.llm.none import NoneProvider
 from lore.llm.ollama import OllamaProvider
 
 __all__ = [
+    "DocChunkExtraction",
     "KnowledgeCandidate",
     "LLMProvider",
     "NoneProvider",
