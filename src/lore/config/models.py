@@ -60,6 +60,7 @@ class SyncConfig:
 
 @dataclass
 class CaptureConfig:
+    enabled: bool = True
     max_entries_per_session: int = 5
     min_novelty_score: float = 0.3
     auto_store_individual: bool = True

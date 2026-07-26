@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import warnings
 from pathlib import Path
 
@@ -82,6 +83,11 @@ def get_global_config(project_dir: Path | None = None) -> GlobalConfig:
     project_overlay = _strip_global_only(project_lore)
     lore = deep_merge(lore, project_overlay)
 
+    capture = _parse_sub_config(CaptureConfig, lore.get("capture"))
+    env_capture = os.environ.get("LORE_CAPTURE")
+    if env_capture is not None:
+        capture.enabled = env_capture not in ("0", "false", "no")
+
     return GlobalConfig(
         projects=lore.get("projects", []),
         store=_parse_sub_config(StoreConfig, lore.get("store")),
@@ -89,7 +95,7 @@ def get_global_config(project_dir: Path | None = None) -> GlobalConfig:
         search=_parse_sub_config(SearchConfig, lore.get("search")),
         git=_parse_sub_config(GitConfig, lore.get("git")),
         sync=_parse_sub_config(SyncConfig, lore.get("sync")),
-        capture=_parse_sub_config(CaptureConfig, lore.get("capture")),
+        capture=capture,
     )
 
 
