@@ -24,6 +24,9 @@ class _MockProvider(LLMProvider):
     def extract_knowledge(self, transcript, existing, project_config=None):
         return self._candidates
 
+    def extract_from_chunk(self, chunk_text, heading, source_file):
+        return []
+
 
 @pytest.fixture
 def store():
@@ -52,6 +55,9 @@ def test_capture_passes_existing_to_provider(store, monkeypatch):
 
         def extract_knowledge(self, transcript, existing, project_config=None):
             received["existing"] = existing
+            return []
+
+        def extract_from_chunk(self, chunk_text, heading, source_file):
             return []
 
     capture_knowledge("transcript", store, _SpyProvider())

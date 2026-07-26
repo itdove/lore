@@ -214,6 +214,9 @@ def test_synthesized_none_on_provider_error(tools, store, monkeypatch):
         def extract_knowledge(self, transcript, existing):
             return []
 
+        def extract_from_chunk(self, chunk_text, heading, source_file):
+            return []
+
     cfg = GlobalConfig(llm=LLMConfig(provider="ollama"))
     monkeypatch.setattr(srv, "get_global_config", lambda: cfg)
     monkeypatch.setattr(srv, "_get_llm_provider", lambda: _FailProvider())

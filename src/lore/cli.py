@@ -953,6 +953,51 @@ def _cmd_hook_capture(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ingest(args: argparse.Namespace) -> int:
+    from lore.ingest.chunker import SUPPORTED_EXTENSIONS
+    from lore.ingest.doc import ingest_file
+    from lore.llm import get_llm_provider
+
+    file_path = Path(args.file)
+    if not file_path.exists():
+        print(f"File not found: {file_path}", file=sys.stderr)
+        return 1
+
+    if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+        print(
+            f"Unsupported format: {file_path.suffix}. "
+            f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        provider = get_llm_provider()
+    except Exception as exc:
+        print(f"LLM provider error: {exc}", file=sys.stderr)
+        return 1
+
+    store = _get_store()
+    entries = ingest_file(
+        file_path,
+        provider,
+        store,
+        level=args.level,
+        level_name=args.level_name,
+    )
+
+    print(f"Ingested {len(entries)} entries from {file_path}")
+    for entry in entries:
+        tags = f" [{entry.tags}]" if entry.tags else ""
+        print(f"  {entry.key}{tags}")
+        snippet = entry.value[:80].replace("\n", " ")
+        if len(entry.value) > 80:
+            snippet += "..."
+        print(f"    {snippet}")
+
+    return 0
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="lore", description="Lore knowledge server")
     sub = parser.add_subparsers(dest="command")
@@ -1041,6 +1086,17 @@ def main(argv: list[str] | None = None) -> None:
     hook_sub.add_parser("nudge", help="Mid-session nudge (PostToolUse)")
     hook_sub.add_parser("capture", help="Capture knowledge (SessionEnd)")
 
+    ingest_parser = sub.add_parser("ingest", help="Ingest document into knowledge base")
+    ingest_parser.add_argument(
+        "--file", required=True, type=Path, help="Path to document file"
+    )
+    ingest_parser.add_argument(
+        "--level", type=int, default=0, help="Knowledge level (default: 0/individual)"
+    )
+    ingest_parser.add_argument(
+        "--level-name", default=None, help="Level name (e.g., team, org)"
+    )
+
     args = parser.parse_args(argv)
 
     handlers = {
@@ -1052,6 +1108,7 @@ def main(argv: list[str] | None = None) -> None:
         "dashboard": _cmd_dashboard,
         "config": _cmd_config,
         "hook": _cmd_hook,
+        "ingest": _cmd_ingest,
     }
 
     handler = handlers.get(args.command)
