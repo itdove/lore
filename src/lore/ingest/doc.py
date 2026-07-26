@@ -7,15 +7,19 @@ from pathlib import Path
 
 from lore.ingest.base import LoreIngester
 from lore.ingest.chunker import SUPPORTED_EXTENSIONS, chunk_document
+from lore.ingest.registry import register
 from lore.llm.base import LLMProvider
 from lore.store.base import KnowledgeEntry, StoreBackend, validate_key
 
 log = logging.getLogger("lore.ingest")
 
 
+@register
 class DocIngester(LoreIngester):
-    trigger = "manual"
+    name = "doc"
+    triggers = frozenset({"manual"})
     review_policy = "pr_based"
+    auto_detect = False
 
     def __init__(
         self,
@@ -25,9 +29,9 @@ class DocIngester(LoreIngester):
         level: int = 0,
         level_name: str | None = None,
     ) -> None:
+        super().__init__(store, file_path.parent)
         self._file_path = file_path
         self._provider = provider
-        self._store = store
         self._level = level
         self._level_name = level_name
 
@@ -66,20 +70,12 @@ class DocIngester(LoreIngester):
                         level=self._level,
                         level_name=self._level_name,
                         tags=tags,
-                        ingested_from="doc-ingester",
+                        ingested_from="doc",
                         provenance=provenance,
                     )
                 )
 
         return entries
-
-    def transform(self, entries: list[KnowledgeEntry]) -> list[KnowledgeEntry]:
-        return entries
-
-    def load(self, entries: list[KnowledgeEntry]) -> None:
-        for entry in entries:
-            self._store.store(entry)
-        self._store.commit()
 
 
 def ingest_file(
