@@ -68,6 +68,12 @@ class CaptureConfig:
 
 
 @dataclass
+class IngestConfig:
+    enabled: bool = True
+    disabled_sources: list[str] = field(default_factory=list)
+
+
+@dataclass
 class GlobalConfig:
     projects: list[str] = field(default_factory=list)
     store: StoreConfig = field(default_factory=StoreConfig)
@@ -76,6 +82,7 @@ class GlobalConfig:
     git: GitConfig = field(default_factory=GitConfig)
     sync: SyncConfig = field(default_factory=SyncConfig)
     capture: CaptureConfig = field(default_factory=CaptureConfig)
+    ingest: IngestConfig = field(default_factory=IngestConfig)
 
 
 @dataclass

@@ -89,7 +89,7 @@ def test_extract_delta_sets_provenance(tmp_path):
     ingester = DocIngester(p, provider, _make_store())
 
     entries = ingester.extract_delta()
-    assert entries[0].ingested_from == "doc-ingester"
+    assert entries[0].ingested_from == "doc"
     prov = json.loads(entries[0].provenance)
     assert prov["source_file"] == str(p)
     assert "chunk_index" in prov

@@ -14,6 +14,7 @@ from lore.config.models import (
     GitConfig,
     GlobalConfig,
     HierarchyLevel,
+    IngestConfig,
     KeyStructure,
     LLMConfig,
     ProjectConfig,
@@ -96,6 +97,7 @@ def get_global_config(project_dir: Path | None = None) -> GlobalConfig:
         git=_parse_sub_config(GitConfig, lore.get("git")),
         sync=_parse_sub_config(SyncConfig, lore.get("sync")),
         capture=capture,
+        ingest=_parse_sub_config(IngestConfig, lore.get("ingest")),
     )
 
 

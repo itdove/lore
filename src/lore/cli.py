@@ -965,43 +965,38 @@ def _cmd_hook_capture(args: argparse.Namespace) -> int:
             file=out,
         )
 
+    # --- Auto-detect and run hook-triggered ingesters ---
+    try:
+        from lore.ingest.registry import detect_ingesters
+
+        ingest_cfg = cfg.ingest
+        if ingest_cfg.enabled:
+            project_dir = Path.cwd()
+            detected = detect_ingesters(
+                project_dir, store, disabled_sources=ingest_cfg.disabled_sources
+            )
+            hook_ingesters = [ing for ing in detected if "hook" in ing.triggers]
+
+            for ingester in hook_ingesters:
+                try:
+                    results = ingester.run()
+                    if results:
+                        print(
+                            f"  [INGEST] {ingester.name}: {len(results)} entries",
+                            file=out,
+                        )
+                except Exception as exc:
+                    print(
+                        f"  [INGEST] {ingester.name}: failed — {exc}",
+                        file=out,
+                    )
+    except Exception:
+        pass
+
     return 0
 
 
-def _cmd_ingest(args: argparse.Namespace) -> int:
-    from lore.ingest.chunker import SUPPORTED_EXTENSIONS
-    from lore.ingest.doc import ingest_file
-    from lore.llm import get_llm_provider
-
-    file_path = Path(args.file)
-    if not file_path.exists():
-        print(f"File not found: {file_path}", file=sys.stderr)
-        return 1
-
-    if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-        print(
-            f"Unsupported format: {file_path.suffix}. "
-            f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
-            file=sys.stderr,
-        )
-        return 1
-
-    try:
-        provider = get_llm_provider()
-    except Exception as exc:
-        print(f"LLM provider error: {exc}", file=sys.stderr)
-        return 1
-
-    store = _get_store()
-    entries = ingest_file(
-        file_path,
-        provider,
-        store,
-        level=args.level,
-        level_name=args.level_name,
-    )
-
-    print(f"Ingested {len(entries)} entries from {file_path}")
+def _print_entries(entries: list) -> None:
     for entry in entries:
         tags = f" [{entry.tags}]" if entry.tags else ""
         print(f"  {entry.key}{tags}")
@@ -1010,7 +1005,105 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
             snippet += "..."
         print(f"    {snippet}")
 
-    return 0
+
+def _cmd_ingest(args: argparse.Namespace) -> int:
+    from lore.ingest.registry import detect_ingesters, get_ingester, list_ingesters
+
+    if getattr(args, "list_sources", False):
+        for name in list_ingesters():
+            print(f"  {name}")
+        return 0
+
+    if getattr(args, "detect_sources", False):
+        from lore.config.manager import get_global_config
+
+        store = _get_store()
+        cfg = get_global_config()
+        detected = detect_ingesters(
+            Path.cwd(), store, disabled_sources=cfg.ingest.disabled_sources
+        )
+        if not detected:
+            print("No ingestable sources detected in current directory.")
+        else:
+            print("Detected sources:")
+            for ing in detected:
+                print(f"  {ing.name}")
+        return 0
+
+    since = None
+    if getattr(args, "since", None):
+        from datetime import datetime
+
+        since = datetime.fromisoformat(args.since)
+
+    file_path = getattr(args, "file", None)
+    source_name = getattr(args, "source", None)
+
+    if file_path:
+        from lore.ingest.chunker import SUPPORTED_EXTENSIONS
+        from lore.ingest.doc import ingest_file
+        from lore.llm import get_llm_provider
+
+        file_path = Path(file_path)
+        if not file_path.exists():
+            print(f"File not found: {file_path}", file=sys.stderr)
+            return 1
+
+        if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            print(
+                f"Unsupported format: {file_path.suffix}. "
+                f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
+                file=sys.stderr,
+            )
+            return 1
+
+        try:
+            provider = get_llm_provider()
+        except Exception as exc:
+            print(f"LLM provider error: {exc}", file=sys.stderr)
+            return 1
+
+        store = _get_store()
+        entries = ingest_file(
+            file_path,
+            provider,
+            store,
+            level=args.level,
+            level_name=args.level_name,
+        )
+
+        print(f"Ingested {len(entries)} entries from {file_path}")
+        _print_entries(entries)
+        return 0
+
+    elif source_name:
+        store = _get_store()
+        project_dir = Path.cwd()
+
+        try:
+            ingester = get_ingester(source_name, store, project_dir)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+        if not ingester.detect(project_dir):
+            print(
+                f"Source '{source_name}' not detected in {project_dir}",
+                file=sys.stderr,
+            )
+            return 1
+
+        entries = ingester.run(since=since)
+        print(f"Ingested {len(entries)} entries from {source_name}")
+        _print_entries(entries)
+        return 0
+
+    else:
+        print(
+            "Specify --file or --source. Use --list or --detect for options.",
+            file=sys.stderr,
+        )
+        return 1
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1101,15 +1194,32 @@ def main(argv: list[str] | None = None) -> None:
     hook_sub.add_parser("nudge", help="Mid-session nudge (PostToolUse)")
     hook_sub.add_parser("capture", help="Capture knowledge (SessionEnd)")
 
-    ingest_parser = sub.add_parser("ingest", help="Ingest document into knowledge base")
+    ingest_parser = sub.add_parser("ingest", help="Ingest knowledge from sources")
+    ingest_source = ingest_parser.add_mutually_exclusive_group()
+    ingest_source.add_argument("--file", type=Path, help="Path to document file")
+    ingest_source.add_argument(
+        "--source", help="Ingester name (e.g., reasonsforge, openwolf)"
+    )
     ingest_parser.add_argument(
-        "--file", required=True, type=Path, help="Path to document file"
+        "--since", default=None, help="Only ingest entries since date (ISO format)"
     )
     ingest_parser.add_argument(
         "--level", type=int, default=0, help="Knowledge level (default: 0/individual)"
     )
     ingest_parser.add_argument(
         "--level-name", default=None, help="Level name (e.g., team, org)"
+    )
+    ingest_parser.add_argument(
+        "--list",
+        dest="list_sources",
+        action="store_true",
+        help="List available ingesters",
+    )
+    ingest_parser.add_argument(
+        "--detect",
+        dest="detect_sources",
+        action="store_true",
+        help="Auto-detect ingestable sources in current directory",
     )
 
     args = parser.parse_args(argv)
