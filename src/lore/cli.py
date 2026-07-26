@@ -45,6 +45,24 @@ def _load_existing_hierarchies(
     return results
 
 
+def _build_level_entry(
+    level: int,
+    repo: str,
+    branch: str = "main",
+    name: str | None = None,
+    description: str | None = None,
+    writable: bool = True,
+) -> dict:
+    entry: dict = {"level": level, "repo": repo, "branch": branch}
+    if name:
+        entry["name"] = name
+    if description:
+        entry["description"] = description
+    if not writable:
+        entry["writable"] = False
+    return entry
+
+
 def _prompt_hierarchy_interactive() -> list[dict]:
     try:
         count_str = input("How many shared levels? [0]: ").strip()
@@ -77,14 +95,9 @@ def _prompt_hierarchy_interactive() -> list[dict]:
             print()
             break
 
-        entry: dict = {"level": i, "repo": repo, "branch": branch}
-        if name:
-            entry["name"] = name
-        if description:
-            entry["description"] = description
-        if not writable:
-            entry["writable"] = False
-        hierarchy.append(entry)
+        hierarchy.append(
+            _build_level_entry(i, repo, branch, name, description, writable)
+        )
 
     return hierarchy
 
@@ -648,17 +661,14 @@ def _cmd_config_add_level(args: argparse.Namespace) -> int:
             )
             return 1
 
-    entry: dict = {
-        "level": args.level,
-        "repo": args.repo,
-        "branch": args.branch,
-        "name": args.name,
-    }
-    if args.description:
-        entry["description"] = args.description
-    if not args.writable:
-        entry["writable"] = False
-
+    entry = _build_level_entry(
+        args.level,
+        args.repo,
+        args.branch,
+        args.name,
+        args.description,
+        args.writable,
+    )
     hierarchy.append(entry)
     hierarchy.sort(key=lambda h: h.get("level", 0))
     save_config(path, data)

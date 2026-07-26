@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -136,12 +138,12 @@ class TestBuildRepoFileUrl:
 
 class TestConfigReadWrite:
     def test_save_and_load_global(self, tmp_path):
-        cfg_path = tmp_path / "config.json"
-        with mock.patch(
-            "lore.dashboard.state._global_config_path",
-            return_value=cfg_path,
-        ):
+        from lore.config.loaders import _clear_config_cache
+
+        with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(tmp_path)}):
+            _clear_config_cache()
             save_global_config({"lore": {"llm": {"provider": "ollama"}}})
+            _clear_config_cache()
             loaded = load_raw_global_config()
             assert loaded["lore"]["llm"]["provider"] == "ollama"
 
@@ -150,30 +152,24 @@ class TestConfigReadWrite:
         cfg_path.write_text('{"old": true}', encoding="utf-8")
         bak_path = cfg_path.with_suffix(".json.bak")
 
-        with mock.patch(
-            "lore.dashboard.state._global_config_path",
-            return_value=cfg_path,
-        ):
+        with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(tmp_path)}):
             save_global_config({"new": True})
             assert bak_path.exists()
             assert json.loads(bak_path.read_text()) == {"old": True}
 
     def test_save_and_load_project(self, tmp_path):
-        cfg_path = tmp_path / ".lore" / "config.json"
-        with mock.patch(
-            "lore.dashboard.state._project_config_path",
-            return_value=cfg_path,
-        ):
+        project_dir = tmp_path / "proj"
+        (project_dir / ".lore").mkdir(parents=True)
+        with mock.patch.object(Path, "cwd", return_value=project_dir):
             save_project_config({"lore": {"hierarchy": [{"level": 1, "repo": "x"}]}})
             loaded = load_raw_project_config()
             assert len(loaded["lore"]["hierarchy"]) == 1
 
     def test_load_missing_returns_empty(self, tmp_path):
-        cfg_path = tmp_path / "nonexistent.json"
-        with mock.patch(
-            "lore.dashboard.state._global_config_path",
-            return_value=cfg_path,
-        ):
+        from lore.config.loaders import _clear_config_cache
+
+        with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(tmp_path / "empty")}):
+            _clear_config_cache()
             assert load_raw_global_config() == {}
 
 

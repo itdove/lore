@@ -4,7 +4,12 @@ import json
 import logging
 from pathlib import Path
 
-from lore.config.loaders import save_config
+from lore.config.loaders import (
+    _load_global_config_raw,
+    _load_json,
+    _load_project_config_raw,
+    save_config,
+)
 from lore.config.utils import config_path
 from lore.store.base import KnowledgeEntry, validate_key  # noqa: F401
 from lore.store.sqlite import SQLiteStore
@@ -103,21 +108,13 @@ def _project_config_path():
 
 
 def load_raw_global_config() -> dict:
-    path = _global_config_path()
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    return _load_global_config_raw()
 
 
 def load_raw_project_config(project_dir: str | None = None) -> dict:
-    path = (
-        Path(project_dir) / ".lore" / "config.json"
-        if project_dir
-        else _project_config_path()
-    )
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    if project_dir:
+        return _load_json(Path(project_dir) / ".lore" / "config.json")
+    return _load_project_config_raw(Path.cwd())
 
 
 def save_global_config(data: dict) -> None:
