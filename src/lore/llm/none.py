@@ -11,6 +11,9 @@ class NoneProvider(LLMProvider):
         return "\n".join(f"[{e.key}] {e.value}" for e in candidates)
 
     def extract_knowledge(
-        self, transcript: str, existing: list[KnowledgeEntry]
+        self,
+        transcript: str,
+        existing: list[KnowledgeEntry],
+        project_config=None,
     ) -> list[KnowledgeCandidate]:
         return []

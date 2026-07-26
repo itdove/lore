@@ -66,15 +66,21 @@ def render_browser() -> None:
 
 def _get_level_options(store) -> dict:
     from lore.config.manager import get_project_config
+    from lore.dashboard.state import get_registered_projects
 
     options: dict = {None: "All Levels", 0: "Individual (0)"}
 
-    try:
-        cfg = get_project_config()
-        for h in cfg.hierarchy:
-            name = h.name or f"Level {h.level}"
-            options[h.level] = f"{name} ({h.level})"
-    except Exception:
+    for project_dir in get_registered_projects():
+        try:
+            cfg = get_project_config(project_dir)
+            for h in cfg.hierarchy:
+                if h.level not in options:
+                    name = h.name or f"Level {h.level}"
+                    options[h.level] = f"{name} ({h.level})"
+        except Exception:
+            pass
+
+    if len(options) <= 2:
         health = store.health()
         for level in sorted(health["entries_by_level"].keys()):
             lvl = int(level)

@@ -36,7 +36,7 @@ def test_init_creates_dirs_and_configs(tmp_path):
     project_dir = tmp_path / "myproject"
     project_dir.mkdir()
 
-    with mock.patch("lore.cli.input", side_effect=["0"]):
+    with mock.patch("lore.cli.input", side_effect=["0", "none"]):
         with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
             with mock.patch.object(Path, "cwd", return_value=project_dir):
                 import argparse
@@ -65,7 +65,7 @@ def test_init_idempotent(tmp_path):
     project_dir = tmp_path / "myproject"
     project_dir.mkdir()
 
-    with mock.patch("lore.cli.input", side_effect=["0"]):
+    with mock.patch("lore.cli.input", side_effect=["0", "none"]):
         with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
             with mock.patch.object(Path, "cwd", return_value=project_dir):
                 import argparse
@@ -74,7 +74,7 @@ def test_init_idempotent(tmp_path):
 
                 _cmd_init(argparse.Namespace())
 
-    with mock.patch("lore.cli.input", side_effect=["0"]):
+    with mock.patch("lore.cli.input", side_effect=["0", "none"]):
         with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
             with mock.patch.object(Path, "cwd", return_value=project_dir):
                 rc = _cmd_init(argparse.Namespace())
@@ -88,7 +88,15 @@ def test_init_with_hierarchy(tmp_path):
     project_dir = tmp_path / "myproject"
     project_dir.mkdir()
 
-    inputs = ["1", "https://github.com/org/knowledge.git", "main", "team", "y"]
+    inputs = [
+        "1",
+        "https://github.com/org/knowledge.git",
+        "main",
+        "team",
+        "",
+        "y",
+        "none",
+    ]
     with mock.patch("lore.cli.input", side_effect=inputs):
         with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
             with mock.patch("lore.cli._cmd_sync", return_value=0):
@@ -137,7 +145,7 @@ def test_init_reuse_hierarchy(tmp_path):
     project_b = tmp_path / "project-b"
     project_b.mkdir()
 
-    with mock.patch("lore.cli.input", return_value="1"):
+    with mock.patch("lore.cli.input", side_effect=["1", "none"]):
         with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
             with mock.patch("lore.cli._cmd_sync", return_value=0):
                 with mock.patch.object(Path, "cwd", return_value=project_b):
@@ -160,7 +168,7 @@ def test_init_registers_project(tmp_path):
     project_dir = tmp_path / "myproject"
     project_dir.mkdir()
 
-    with mock.patch("lore.cli.input", side_effect=["0"]):
+    with mock.patch("lore.cli.input", side_effect=["0", "none"]):
         with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
             with mock.patch.object(Path, "cwd", return_value=project_dir):
                 import argparse
@@ -601,15 +609,42 @@ def test_config_set_project(tmp_path, capsys):
 
         rc = _cmd_config_set(
             argparse.Namespace(
-                key="lore.store.path",
-                value="/tmp/db.sqlite",
+                key="lore.sync.auto_sync",
+                value="true",
                 global_=False,
             )
         )
 
     assert rc == 0
     data = json.loads((lore_dir / "config.json").read_text())
-    assert data["lore"]["store"]["path"] == "/tmp/db.sqlite"
+    assert data["lore"]["sync"]["auto_sync"] is True
+
+
+def test_config_set_global_only_key_routes_to_global(tmp_path, capsys):
+    config_path().parent.mkdir(parents=True, exist_ok=True)
+    config_path().write_text("{}")
+
+    project_dir = tmp_path / "myproject"
+    lore_dir = project_dir / ".lore"
+    lore_dir.mkdir(parents=True)
+    (lore_dir / "config.json").write_text("{}")
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        from lore.cli import _cmd_config_set
+
+        rc = _cmd_config_set(
+            argparse.Namespace(
+                key="lore.search.embedding_provider",
+                value="ollama",
+                global_=False,
+            )
+        )
+
+    assert rc == 0
+    global_data = json.loads(config_path().read_text())
+    assert global_data["lore"]["search"]["embedding_provider"] == "ollama"
+    project_data = json.loads((lore_dir / "config.json").read_text())
+    assert "embedding_provider" not in project_data.get("lore", {}).get("search", {})
 
 
 def test_config_set_global(tmp_path, capsys):
@@ -1011,10 +1046,18 @@ def test_hook_nudge_exits_zero():
     assert _cmd_hook_nudge(argparse.Namespace()) == 0
 
 
-def test_hook_capture_exits_zero():
+def test_hook_capture_exits_zero_empty_stdin():
     from lore.cli import _cmd_hook_capture
 
-    assert _cmd_hook_capture(argparse.Namespace()) == 0
+    with mock.patch("sys.stdin", io.StringIO("")):
+        assert _cmd_hook_capture(argparse.Namespace()) == 0
+
+
+def test_hook_capture_exits_zero_no_llm():
+    from lore.cli import _cmd_hook_capture
+
+    with mock.patch("sys.stdin", io.StringIO("some transcript")):
+        assert _cmd_hook_capture(argparse.Namespace()) == 0
 
 
 def test_hook_recall_invalid_json(capsys):
@@ -1252,7 +1295,7 @@ def test_init_warns_when_vec_not_loaded(tmp_path, capsys):
 
     import lore.store.sqlite as sqlite_mod
 
-    with mock.patch("lore.cli.input", side_effect=["0"]):
+    with mock.patch("lore.cli.input", side_effect=["0", "none"]):
         with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
             with mock.patch.object(Path, "cwd", return_value=project_dir):
                 old = sqlite_mod._VEC_LOADED

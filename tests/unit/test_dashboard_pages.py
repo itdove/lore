@@ -18,7 +18,7 @@ class TestCrudScopeEnforcement:
         assert validate_key("type:domain:slug") is None
 
     def test_validate_key_rejects_invalid(self):
-        assert validate_key("bad-key") is not None
+        assert validate_key("bad key!") is not None
 
     def test_store_level_zero(self):
         store = get_dashboard_store()

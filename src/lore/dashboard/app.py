@@ -13,7 +13,7 @@ def create_app() -> None:
     app.add_static_files("/static", str(_STATIC_DIR))
 
     @ui.page("/")
-    def index():
+    def index(tab: str = "overview"):
         with ui.header().classes("items-center justify-between"):
             with ui.row().classes("items-center q-gutter-sm"):
                 ui.image("/static/lore-logo.png").classes("w-10 h-10 rounded")
@@ -43,16 +43,40 @@ def create_app() -> None:
                 sync_tab = ui.tab("sync", label="Sync", icon="sync")
                 config_tab = ui.tab("config", label="Config", icon="settings")
 
-        with ui.tab_panels(tabs, value=overview_tab).classes("w-full h-full"):
+        tab_map = {
+            "overview": overview_tab,
+            "browse": browse_tab,
+            "create": create_tab,
+            "conflicts": conflicts_tab,
+            "sync": sync_tab,
+            "config": config_tab,
+        }
+        initial_tab = tab_map.get(tab, overview_tab)
+
+        browse_container = None
+
+        def on_tab_change(e):
+            if e.value == "browse" and browse_container is not None:
+                browse_container.clear()
+                with browse_container:
+                    from lore.dashboard.pages.browser import render_browser
+
+                    render_browser()
+
+        with ui.tab_panels(tabs, value=initial_tab, on_change=on_tab_change).classes(
+            "w-full h-full"
+        ):
             with ui.tab_panel(overview_tab):
                 from lore.dashboard.pages.overview import render_overview
 
                 render_overview()
 
             with ui.tab_panel(browse_tab):
-                from lore.dashboard.pages.browser import render_browser
+                browse_container = ui.column().classes("w-full")
+                with browse_container:
+                    from lore.dashboard.pages.browser import render_browser
 
-                render_browser()
+                    render_browser()
 
             with ui.tab_panel(create_tab):
                 from lore.dashboard.pages.individual import render_create_form

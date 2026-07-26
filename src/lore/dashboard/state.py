@@ -36,9 +36,13 @@ def get_sync_status() -> dict:
 
 
 def trigger_sync():
+    from lore.store import get_store
     from lore.sync.helpers import run_sync
 
-    return run_sync(get_dashboard_store())
+    store = get_store()
+    result = run_sync(store)
+    reset_store()
+    return result
 
 
 def build_repo_file_url(entry: KnowledgeEntry) -> str | None:
@@ -105,8 +109,12 @@ def load_raw_global_config() -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def load_raw_project_config() -> dict:
-    path = _project_config_path()
+def load_raw_project_config(project_dir: str | None = None) -> dict:
+    path = (
+        Path(project_dir) / ".lore" / "config.json"
+        if project_dir
+        else _project_config_path()
+    )
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
@@ -116,8 +124,18 @@ def save_global_config(data: dict) -> None:
     save_config(_global_config_path(), data)
 
 
-def save_project_config(data: dict) -> None:
-    save_config(_project_config_path(), data)
+def save_project_config(data: dict, project_dir: str | None = None) -> None:
+    path = (
+        Path(project_dir) / ".lore" / "config.json"
+        if project_dir
+        else _project_config_path()
+    )
+    save_config(path, data)
+
+
+def get_registered_projects() -> list[str]:
+    raw = load_raw_global_config()
+    return raw.get("lore", {}).get("projects", [])
 
 
 def promote_entry(entry: KnowledgeEntry) -> dict:

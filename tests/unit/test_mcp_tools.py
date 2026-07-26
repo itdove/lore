@@ -425,18 +425,21 @@ def test_store_knowledge_individual(tools, store):
     assert entry.level == 0
 
 
-def test_store_knowledge_invalid_key(tools):
+def test_store_knowledge_valid_single_segment(tools, store):
+    result = tools["store_knowledge"](key="jwt-leeway", value="val")
+    assert result["key"] == "jwt-leeway"
+
+
+def test_store_knowledge_valid_two_segments(tools, store):
+    result = tools["store_knowledge"](key="bug:jwt", value="val")
+    assert result["key"] == "bug:jwt"
+
+
+def test_store_knowledge_invalid_key_spaces(tools):
     import pytest
 
     with pytest.raises(ValueError, match="Invalid key format"):
-        tools["store_knowledge"](key="bad-key", value="val")
-
-
-def test_store_knowledge_invalid_key_too_few(tools):
-    import pytest
-
-    with pytest.raises(ValueError, match="Invalid key format"):
-        tools["store_knowledge"](key="only:two", value="val")
+        tools["store_knowledge"](key="bad key!", value="val")
 
 
 def test_store_knowledge_invalid_key_empty_part(tools):
@@ -491,9 +494,20 @@ def test_store_knowledge_update_does_not_corrupt_other_levels(tools, store):
     assert shared[0].value == "shared"
 
 
-def test_store_knowledge_shared_level(tools, store, monkeypatch):
+def test_store_knowledge_shared_level_creates_pr_only(tools, store, monkeypatch):
     import lore.mcp.server as srv
     from lore.config.models import HierarchyLevel, ProjectConfig
+    from lore.git.base import GitInterface
+
+    class _MockGit(GitInterface):
+        def clone_or_pull(self, repo_url, target_dir, branch="main"):
+            return "abc123"
+
+        def create_pr(self, **kwargs):
+            return "https://github.com/org/repo/pull/99"
+
+        def get_pr_status(self, pr_url):
+            return "open"
 
     monkeypatch.setattr(
         srv,
@@ -504,6 +518,7 @@ def test_store_knowledge_shared_level(tools, store, monkeypatch):
             ]
         ),
     )
+    monkeypatch.setattr("lore.mcp.server.get_git_interface", lambda _: _MockGit())
 
     result = tools["store_knowledge"](
         key="guide:onboard:setup",
@@ -512,11 +527,10 @@ def test_store_knowledge_shared_level(tools, store, monkeypatch):
         level="team",
     )
     assert result["level"] == 1
-    assert result["pr_url"] is None  # stub
+    assert result["pr_url"] == "https://github.com/org/repo/pull/99"
 
     entry = store.get("guide:onboard:setup")
-    assert entry.level == 1
-    assert entry.level_name == "team"
+    assert entry is None
 
 
 def test_store_knowledge_unknown_level(tools, monkeypatch):

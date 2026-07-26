@@ -53,8 +53,14 @@ class TestValidateKey:
     def test_valid_with_underscores(self):
         assert validate_key("config:db_pool:max_size") is None
 
-    def test_invalid_missing_segment(self):
-        assert validate_key("type:domain") is not None
+    def test_valid_single_segment(self):
+        assert validate_key("jwt-leeway") is None
+
+    def test_valid_two_segments(self):
+        assert validate_key("bug:jwt") is None
+
+    def test_valid_four_segments(self):
+        assert validate_key("a:b:c:d") is None
 
     def test_invalid_empty(self):
         assert validate_key("") is not None
@@ -62,8 +68,8 @@ class TestValidateKey:
     def test_invalid_spaces(self):
         assert validate_key("type:do main:slug") is not None
 
-    def test_invalid_four_segments(self):
-        assert validate_key("a:b:c:d") is not None
+    def test_invalid_special_chars(self):
+        assert validate_key("bug:api/jwt") is not None
 
 
 class TestBuildRepoFileUrl:

@@ -3,10 +3,11 @@ from __future__ import annotations
 import pytest
 
 from lore.llm.base import (
-    CAPTURE_PROMPT,
+    CAPTURE_PROMPT_BASE,
     SYNTHESIS_PROMPTS,
     KnowledgeCandidate,
     LLMProvider,
+    build_capture_prompt,
 )
 
 # =====================================================================
@@ -55,9 +56,50 @@ def test_synthesis_prompts_has_required_keys():
         assert len(SYNTHESIS_PROMPTS[key]) > 0
 
 
-def test_capture_prompt_is_nonempty():
-    assert isinstance(CAPTURE_PROMPT, str)
-    assert len(CAPTURE_PROMPT) > 0
+def test_capture_prompt_base_is_nonempty():
+    assert isinstance(CAPTURE_PROMPT_BASE, str)
+    assert len(CAPTURE_PROMPT_BASE) > 0
+
+
+def test_build_capture_prompt_without_config():
+    prompt = build_capture_prompt()
+    assert "knowledge extraction" in prompt
+
+
+def test_build_capture_prompt_with_config():
+    from lore.config.models import (
+        HierarchyLevel,
+        KeyStructure,
+        ProjectConfig,
+    )
+
+    cfg = ProjectConfig(
+        hierarchy=[
+            HierarchyLevel(
+                level=1,
+                repo="org/repo",
+                name="team",
+                writable=True,
+                description="Team knowledge",
+            ),
+            HierarchyLevel(
+                level=2,
+                repo="org/repo",
+                name="org",
+                writable=False,
+                description="Org standards",
+            ),
+        ],
+        key_structure=KeyStructure(
+            examples=["bug:api:jwt", "decision:arch:fastapi"],
+        ),
+    )
+    prompt = build_capture_prompt(cfg)
+    assert "team" in prompt
+    assert "writable" in prompt
+    assert "read-only" in prompt
+    assert "bug:api:jwt" in prompt
+    assert "non-writable" in prompt.lower()
 
 
 def test_abc_methods_defined():

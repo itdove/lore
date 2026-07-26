@@ -65,7 +65,6 @@ def show_entry_detail(store, entry_id: str) -> None:
         with ui.row().classes("q-gutter-sm q-mt-md"):
             if not writable:
                 ui.badge("Read-only", color="grey").classes("q-mr-sm")
-                _disabled_delete("Read-only level")
             elif entry.level == 0:
                 ui.button(
                     "Edit",
@@ -87,20 +86,12 @@ def show_entry_detail(store, entry_id: str) -> None:
                     icon="publish",
                     on_click=lambda: _do_promote(entry),
                 ).props("flat color=positive")
-            else:
-                _disabled_delete("Shared entries — submit a PR to delete")
 
             ui.button("Close", on_click=dialog.close).props("flat")
 
         _render_history(store, entry.id)
 
     dialog.open()
-
-
-def _disabled_delete(tooltip: str) -> None:
-    ui.button("Delete", icon="delete", color="negative").props("flat disable").tooltip(
-        tooltip
-    )
 
 
 def _render_history(store, entry_id: str) -> None:
@@ -132,7 +123,6 @@ def _render_history(store, entry_id: str) -> None:
 def _open_child_dialog(entry, parent_dialog, fn_name: str) -> None:
     from lore.dashboard.pages import individual
 
-    parent_dialog.close()
     getattr(individual, fn_name)(entry)
 
 

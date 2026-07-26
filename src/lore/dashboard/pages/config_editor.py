@@ -6,6 +6,7 @@ from typing import Callable
 from nicegui import ui
 
 from lore.dashboard.state import (
+    get_registered_projects,
     load_raw_global_config,
     load_raw_project_config,
     save_global_config,
@@ -29,12 +30,7 @@ def render_config() -> None:
                 _render_global_form,
             )
         with ui.tab_panel(project_tab):
-            _editor_scaffold(
-                load_raw_project_config,
-                save_project_config,
-                "Project config saved. Restart MCP server to apply.",
-                _render_project_form,
-            )
+            _render_project_tab()
 
 
 def _editor_scaffold(
@@ -76,7 +72,48 @@ def _render_global_form(data: dict, save_fn) -> None:
     lore = data.setdefault("lore", {})
 
     with ui.card().classes("w-full q-mb-md"):
-        ui.label("LLM").classes("text-subtitle1 text-weight-bold")
+        ui.label("Embedding (global-only)").classes("text-subtitle1 text-weight-bold")
+        ui.label(
+            "Shared across all projects — all entries must use " "the same vector space"
+        ).classes("text-caption text-grey q-mb-sm")
+
+        search = lore.setdefault("search", {})
+
+        ui.select(
+            ["none", "ollama"],
+            label="Embedding Provider",
+            value=search.get("embedding_provider", "none"),
+            on_change=lambda e: search.update(embedding_provider=e.value),
+        ).classes("w-full max-w-xs")
+
+        ui.input(
+            label="Embedding Model",
+            value=search.get("embedding_model", ""),
+            on_change=lambda e: search.update(embedding_model=e.value),
+        ).classes("w-full max-w-xs")
+
+        ui.input(
+            label="Embedding Base URL",
+            value=search.get("embedding_base_url", ""),
+            on_change=lambda e: search.update(embedding_base_url=e.value),
+        ).classes("w-full max-w-xs")
+
+    with ui.card().classes("w-full q-mb-md"):
+        ui.label("Store (global-only)").classes("text-subtitle1 text-weight-bold")
+        store = lore.setdefault("store", {})
+
+        ui.input(
+            label="Database Path",
+            value=store.get("path", ""),
+            on_change=lambda e: store.update(path=e.value),
+        ).classes("w-full max-w-md")
+
+    with ui.card().classes("w-full q-mb-md"):
+        ui.label("Default LLM").classes("text-subtitle1 text-weight-bold")
+        ui.label("Default LLM for synthesis — projects can override").classes(
+            "text-caption text-grey q-mb-sm"
+        )
+
         llm = lore.setdefault("llm", {})
 
         ui.select(
@@ -93,37 +130,7 @@ def _render_global_form(data: dict, save_fn) -> None:
         ).classes("w-full max-w-xs")
 
     with ui.card().classes("w-full q-mb-md"):
-        ui.label("Search & Embedding").classes("text-subtitle1 text-weight-bold")
-        search = lore.setdefault("search", {})
-
-        ui.select(
-            ["none", "ollama"],
-            label="Embedding Provider",
-            value=search.get("embedding_provider", "none"),
-            on_change=lambda e: search.update(embedding_provider=e.value),
-        ).classes("w-full max-w-xs")
-
-        ui.input(
-            label="Embedding Model",
-            value=search.get("embedding_model", ""),
-            on_change=lambda e: search.update(embedding_model=e.value),
-        ).classes("w-full max-w-xs")
-
-        _labeled_slider(
-            "Min Similarity",
-            search,
-            "min_similarity",
-            0.3,
-        )
-        _labeled_slider(
-            "Dedup Threshold",
-            search,
-            "dedup_threshold",
-            0.20,
-        )
-
-    with ui.card().classes("w-full q-mb-md"):
-        ui.label("Sync").classes("text-subtitle1 text-weight-bold")
+        ui.label("Default Sync").classes("text-subtitle1 text-weight-bold")
         sync = lore.setdefault("sync", {})
 
         ui.switch(
@@ -140,7 +147,7 @@ def _render_global_form(data: dict, save_fn) -> None:
         ).classes("w-full max-w-xs")
 
     with ui.card().classes("w-full q-mb-md"):
-        ui.label("Git").classes("text-subtitle1 text-weight-bold")
+        ui.label("Default Git").classes("text-subtitle1 text-weight-bold")
         git = lore.setdefault("git", {})
 
         ui.select(
@@ -151,6 +158,57 @@ def _render_global_form(data: dict, save_fn) -> None:
         ).classes("w-full max-w-xs")
 
     ui.button("Save", icon="save", on_click=save_fn).props("color=primary")
+
+
+def _render_project_tab() -> None:
+    from pathlib import Path
+
+    projects = get_registered_projects()
+
+    if not projects:
+        ui.label("No projects registered.").classes("text-italic text-grey")
+        ui.label("Run 'lore init' in a project directory " "to register it.").classes(
+            "text-caption text-grey"
+        )
+        return
+
+    cwd = str(Path.cwd())
+    default = cwd if cwd in projects else projects[0]
+    options = {p: Path(p).name for p in projects}
+
+    state = {"selected": default}
+
+    def on_project_change(e):
+        state["selected"] = e.value
+        refresh_editor()
+
+    ui.select(
+        options=options,
+        label="Project",
+        value=state["selected"],
+        on_change=on_project_change,
+    ).classes("w-full max-w-lg q-mb-md")
+
+    editor_container = ui.column().classes("w-full")
+
+    def load_project():
+        return load_raw_project_config(state["selected"])
+
+    def save_project(data):
+        save_project_config(data, state["selected"])
+
+    def refresh_editor():
+        editor_container.clear()
+        with editor_container:
+            ui.label(state["selected"]).classes("text-caption text-grey q-mb-sm")
+            _editor_scaffold(
+                load_project,
+                save_project,
+                f"Project config saved for " f"{Path(state['selected']).name}.",
+                _render_project_form,
+            )
+
+    refresh_editor()
 
 
 def _labeled_slider(label: str, section: dict, key: str, default: float) -> None:
@@ -209,14 +267,12 @@ def _render_project_form(data: dict, save_fn) -> None:
         ).classes("q-mt-sm")
 
     with ui.card().classes("w-full q-mb-md"):
-        ui.label("Project Overrides").classes("text-subtitle1 text-weight-bold")
-        ui.label("Override global LLM/Search settings for this project").classes(
+        ui.label("LLM Override").classes("text-subtitle1 text-weight-bold")
+        ui.label("Override global LLM for this project's synthesis").classes(
             "text-caption text-grey q-mb-sm"
         )
 
         llm = lore.setdefault("llm", {})
-        search = lore.setdefault("search", {})
-
         with ui.row().classes("q-gutter-md"):
             ui.select(
                 ["", "none", "ollama"],
@@ -229,16 +285,43 @@ def _render_project_form(data: dict, save_fn) -> None:
                 ),
             ).classes("max-w-xs")
 
-            ui.select(
-                ["", "none", "ollama"],
-                label="Embedding Provider",
-                value=search.get("embedding_provider", ""),
-                on_change=lambda e: (
-                    search.update(embedding_provider=e.value)
-                    if e.value
-                    else search.pop("embedding_provider", None)
-                ),
+            ui.input(
+                label="LLM Model",
+                value=llm.get("model", ""),
+                on_change=lambda e: llm.update(model=e.value),
             ).classes("max-w-xs")
+
+    with ui.card().classes("w-full q-mb-md"):
+        ui.label("Search Thresholds").classes("text-subtitle1 text-weight-bold")
+        search = lore.setdefault("search", {})
+        _labeled_slider("Min Similarity", search, "min_similarity", 0.3)
+        _labeled_slider(
+            "Dedup Threshold",
+            search,
+            "dedup_threshold",
+            0.20,
+        )
+
+    with ui.card().classes("w-full q-mb-md"):
+        ui.label("Sync").classes("text-subtitle1 text-weight-bold")
+        sync = lore.setdefault("sync", {})
+
+        ui.switch(
+            "Auto Sync",
+            value=sync.get("auto_sync", True),
+            on_change=lambda e: sync.update(auto_sync=e.value),
+        )
+
+    with ui.card().classes("w-full q-mb-md"):
+        ui.label("Git").classes("text-subtitle1 text-weight-bold")
+        git = lore.setdefault("git", {})
+
+        ui.select(
+            ["github"],
+            label="Provider",
+            value=git.get("provider", "github"),
+            on_change=lambda e: git.update(provider=e.value),
+        ).classes("w-full max-w-xs")
 
     ui.button("Save", icon="save", on_click=save_fn).props("color=primary")
 
@@ -302,7 +385,10 @@ def _render_raw_editor(data: dict, save_fn) -> None:
             ui.notify(f"Invalid JSON: {exc}", type="negative")
             return
         if not isinstance(parsed, dict):
-            ui.notify("Config must be a JSON object", type="negative")
+            ui.notify(
+                "Config must be a JSON object",
+                type="negative",
+            )
             return
         data.clear()
         data.update(parsed)
