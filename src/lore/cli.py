@@ -687,6 +687,16 @@ def _cmd_config_add_level(args: argparse.Namespace) -> int:
 # =====================================================================
 
 
+def _is_capture_enabled() -> bool:
+    try:
+        from lore.config.manager import get_global_config
+
+        cfg = get_global_config()
+        return cfg.capture.enabled
+    except Exception:
+        return True
+
+
 def _cmd_dashboard(args: argparse.Namespace) -> int:
     from lore.dashboard import launch
 
@@ -801,6 +811,8 @@ def _cmd_hook_recall(args: argparse.Namespace) -> int:
 
 
 def _cmd_hook_nudge(args: argparse.Namespace) -> int:
+    if not _is_capture_enabled():
+        return 0
     return 0
 
 
@@ -812,6 +824,9 @@ def _cmd_hook_capture(args: argparse.Namespace) -> int:
     from lore.git import GitError, get_git_interface, key_to_path
     from lore.llm import get_llm_provider
     from lore.store.base import KnowledgeEntry
+
+    if not _is_capture_enabled():
+        return 0
 
     transcript = sys.stdin.read()
     if not transcript.strip():

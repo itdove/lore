@@ -409,3 +409,65 @@ def test_projects_array_readable(tmp_path):
         assert len(gc.projects) == 2
         assert "/home/dev/proj-a" in gc.projects
         assert "/home/dev/proj-b" in gc.projects
+
+
+def test_capture_enabled_default_true(tmp_path):
+    with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(tmp_path)}, clear=False):
+        _clear_config_cache()
+        gc = get_global_config()
+        assert gc.capture.enabled is True
+
+
+def test_capture_enabled_from_config(tmp_path):
+    with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(tmp_path)}, clear=False):
+        _clear_config_cache()
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps({"lore": {"capture": {"enabled": False}}}))
+        gc = get_global_config()
+        assert gc.capture.enabled is False
+
+
+def test_capture_enabled_env_var_zero(tmp_path):
+    with mock.patch.dict(
+        os.environ,
+        {"LORE_CONFIG_DIR": str(tmp_path), "LORE_CAPTURE": "0"},
+        clear=False,
+    ):
+        _clear_config_cache()
+        gc = get_global_config()
+        assert gc.capture.enabled is False
+
+
+def test_capture_enabled_env_var_false_string(tmp_path):
+    with mock.patch.dict(
+        os.environ,
+        {"LORE_CONFIG_DIR": str(tmp_path), "LORE_CAPTURE": "false"},
+        clear=False,
+    ):
+        _clear_config_cache()
+        gc = get_global_config()
+        assert gc.capture.enabled is False
+
+
+def test_capture_enabled_env_var_one(tmp_path):
+    with mock.patch.dict(
+        os.environ,
+        {"LORE_CONFIG_DIR": str(tmp_path), "LORE_CAPTURE": "1"},
+        clear=False,
+    ):
+        _clear_config_cache()
+        gc = get_global_config()
+        assert gc.capture.enabled is True
+
+
+def test_capture_enabled_env_var_overrides_config(tmp_path):
+    with mock.patch.dict(
+        os.environ,
+        {"LORE_CONFIG_DIR": str(tmp_path), "LORE_CAPTURE": "0"},
+        clear=False,
+    ):
+        _clear_config_cache()
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps({"lore": {"capture": {"enabled": True}}}))
+        gc = get_global_config()
+        assert gc.capture.enabled is False

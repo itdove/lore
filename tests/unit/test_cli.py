@@ -1070,6 +1070,50 @@ def test_hook_recall_invalid_json(capsys):
     assert capsys.readouterr().out == ""
 
 
+def test_hook_nudge_exits_when_capture_disabled():
+    from lore.cli import _cmd_hook_nudge
+
+    with mock.patch("lore.cli._is_capture_enabled", return_value=False):
+        assert _cmd_hook_nudge(argparse.Namespace()) == 0
+
+
+def test_hook_capture_exits_when_capture_disabled():
+    from lore.cli import _cmd_hook_capture
+
+    with mock.patch("lore.cli._is_capture_enabled", return_value=False):
+        assert _cmd_hook_capture(argparse.Namespace()) == 0
+
+
+def test_hook_capture_disabled_does_not_read_stdin():
+    from lore.cli import _cmd_hook_capture
+
+    with mock.patch("lore.cli._is_capture_enabled", return_value=False):
+        with mock.patch("sys.stdin") as mock_stdin:
+            _cmd_hook_capture(argparse.Namespace())
+            mock_stdin.read.assert_not_called()
+
+
+def test_hook_recall_runs_when_capture_disabled(store, capsys):
+    store.store(_make_entry(key="test:key", value="test value"))
+
+    payload = json.dumps({"user_message": "test"})
+    with mock.patch("sys.stdin", io.StringIO(payload)):
+        with mock.patch("lore.cli._is_lore_project", return_value=True):
+            with mock.patch("lore.cli._get_store", return_value=store):
+                with mock.patch(
+                    "lore.config.manager.get_project_config",
+                    return_value=mock.MagicMock(hierarchy=[]),
+                ):
+                    with mock.patch("lore.cli._maybe_trigger_auto_sync"):
+                        from lore.cli import _cmd_hook_recall
+
+                        rc = _cmd_hook_recall(argparse.Namespace())
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "test:key" in out
+
+
 def test_hook_no_subcommand(capsys):
     from lore.cli import _cmd_hook
 
