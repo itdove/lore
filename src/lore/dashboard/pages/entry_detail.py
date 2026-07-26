@@ -5,6 +5,7 @@ from nicegui import ui
 from lore.dashboard.pages import format_level_label
 from lore.dashboard.state import (
     build_repo_file_url,
+    is_level_writable,
     promote_entry,
 )
 
@@ -59,8 +60,12 @@ def show_entry_detail(store, entry_id: str) -> None:
                     "q-mt-sm"
                 )
 
+        writable = is_level_writable(entry.level)
+
         with ui.row().classes("q-gutter-sm q-mt-md"):
-            if entry.level == 0:
+            if not writable:
+                ui.badge("Read-only", color="grey").classes("q-mr-sm")
+            elif entry.level == 0:
                 ui.button(
                     "Edit",
                     icon="edit",
@@ -118,7 +123,6 @@ def _render_history(store, entry_id: str) -> None:
 def _open_child_dialog(entry, parent_dialog, fn_name: str) -> None:
     from lore.dashboard.pages import individual
 
-    parent_dialog.close()
     getattr(individual, fn_name)(entry)
 
 

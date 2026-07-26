@@ -9,6 +9,8 @@ class HierarchyLevel:
     repo: str
     branch: str = "main"
     name: str | None = None
+    writable: bool = True
+    description: str | None = None
 
 
 @dataclass
@@ -57,6 +59,14 @@ class SyncConfig:
 
 
 @dataclass
+class CaptureConfig:
+    max_entries_per_session: int = 5
+    min_novelty_score: float = 0.3
+    auto_store_individual: bool = True
+    auto_pr_shared: bool = False
+
+
+@dataclass
 class GlobalConfig:
     projects: list[str] = field(default_factory=list)
     store: StoreConfig = field(default_factory=StoreConfig)
@@ -64,8 +74,21 @@ class GlobalConfig:
     search: SearchConfig = field(default_factory=SearchConfig)
     git: GitConfig = field(default_factory=GitConfig)
     sync: SyncConfig = field(default_factory=SyncConfig)
+    capture: CaptureConfig = field(default_factory=CaptureConfig)
+
+
+@dataclass
+class KeyStructure:
+    description: str = "Keys use colon-separated segments from general to specific"
+    examples: list[str] = field(default_factory=list)
 
 
 @dataclass
 class ProjectConfig:
     hierarchy: list[HierarchyLevel] = field(default_factory=list)
+    individual_description: str = (
+        "Store here when knowledge is specific to this project or "
+        "session: local discoveries, work-in-progress findings, "
+        "project-specific patterns not yet validated for the team."
+    )
+    key_structure: KeyStructure = field(default_factory=KeyStructure)

@@ -45,6 +45,24 @@ def _load_existing_hierarchies(
     return results
 
 
+def _build_level_entry(
+    level: int,
+    repo: str,
+    branch: str = "main",
+    name: str | None = None,
+    description: str | None = None,
+    writable: bool = True,
+) -> dict:
+    entry: dict = {"level": level, "repo": repo, "branch": branch}
+    if name:
+        entry["name"] = name
+    if description:
+        entry["description"] = description
+    if not writable:
+        entry["writable"] = False
+    return entry
+
+
 def _prompt_hierarchy_interactive() -> list[dict]:
     try:
         count_str = input("How many shared levels? [0]: ").strip()
@@ -70,14 +88,16 @@ def _prompt_hierarchy_interactive() -> list[dict]:
                 continue
             branch = input("  Branch [main]: ").strip() or "main"
             name = input("  Name (optional): ").strip() or None
+            description = input("  Description (optional): ").strip() or None
+            writable_str = input("  Writable by agents? [Y/n]: ").strip().lower()
+            writable = writable_str not in ("n", "no")
         except (EOFError, KeyboardInterrupt):
             print()
             break
 
-        entry: dict = {"level": i, "repo": repo, "branch": branch}
-        if name:
-            entry["name"] = name
-        hierarchy.append(entry)
+        hierarchy.append(
+            _build_level_entry(i, repo, branch, name, description, writable)
+        )
 
     return hierarchy
 
@@ -113,6 +133,32 @@ def _prompt_hierarchy(global_cfg: dict) -> list[dict]:
         return hierarchy
 
     return _prompt_hierarchy_interactive()
+
+
+def _prompt_global_providers(global_cfg: dict) -> dict:
+    from lore.config.loaders import save_config
+    from lore.config.utils import config_path
+
+    lore = global_cfg.setdefault("lore", {})
+    search = lore.setdefault("search", {})
+
+    if search.get("embedding_provider"):
+        print("  Global embedding already configured, skipping prompt")
+        return global_cfg
+
+    print("\nGlobal embedding settings (shared across all projects):")
+
+    try:
+        emb = input("  Embedding provider [none/ollama] (ollama): ").strip().lower()
+        search["embedding_provider"] = "none" if emb == "none" else "ollama"
+        if search["embedding_provider"] == "ollama":
+            model = input("  Embedding model (nomic-embed-text): ").strip()
+            search["embedding_model"] = model or "nomic-embed-text"
+    except (EOFError, KeyboardInterrupt):
+        print()
+
+    save_config(config_path(), global_cfg)
+    return global_cfg
 
 
 def _write_project_config(hierarchy: list[dict]) -> None:
@@ -224,9 +270,15 @@ def _cmd_init(args: argparse.Namespace) -> int:
     global_cfg = _ensure_global_config()
     print("  Global config ready")
 
-    hierarchy = _prompt_hierarchy(global_cfg)
+    if getattr(args, "no_levels", False):
+        hierarchy = []
+    else:
+        hierarchy = _prompt_hierarchy(global_cfg)
     _write_project_config(hierarchy)
     print(f"  Project config written ({len(hierarchy)} hierarchy levels)")
+
+    global_cfg = _prompt_global_providers(global_cfg)
+    print("  Global providers configured")
 
     db = db_path()
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -494,8 +546,13 @@ def _cmd_config(args: argparse.Namespace) -> int:
         return _cmd_config_set(args)
     elif sub == "edit":
         return _cmd_config_edit(args)
+    elif sub == "add-level":
+        return _cmd_config_add_level(args)
     else:
-        print("Usage: lore config {show|set|edit}", file=sys.stderr)
+        print(
+            "Usage: lore config {show|set|edit|add-level}",
+            file=sys.stderr,
+        )
         return 1
 
 
@@ -525,18 +582,27 @@ def _cmd_config_show(args: argparse.Namespace) -> int:
 
 
 def _cmd_config_set(args: argparse.Namespace) -> int:
-    from lore.config.loaders import _clear_config_cache
+    from lore.config.loaders import save_config
+    from lore.config.manager import GLOBAL_ONLY_SUBKEYS
+    from lore.config.utils import config_path
 
-    path = _resolve_config_path(getattr(args, "global_", False))
-    if path is None:
-        return 1
+    stripped = args.key.removeprefix("lore.")
+    if stripped in GLOBAL_ONLY_SUBKEYS:
+        path = config_path()
+        print(
+            f"  (routing to global config — {stripped} "
+            "must be consistent across projects)"
+        )
+    else:
+        path = _resolve_config_path(getattr(args, "global_", False))
+        if path is None:
+            return 1
 
     data = _load_json_file(path)
     keys = args.key.split(".")
     value = _parse_value(args.value)
     _set_nested(data, keys, value)
-    _write_json_file(path, data)
-    _clear_config_cache()
+    save_config(path, data)
     print(f"Set {args.key} = {json.dumps(value)}")
     return 0
 
@@ -545,7 +611,7 @@ def _cmd_config_edit(args: argparse.Namespace) -> int:
     import os
     import subprocess
 
-    from lore.config.loaders import _clear_config_cache
+    from lore.config.loaders import _clear_config_cache  # noqa: F811
 
     path = _resolve_config_path(getattr(args, "global_", False))
     if path is None:
@@ -568,6 +634,51 @@ def _cmd_config_edit(args: argparse.Namespace) -> int:
 
     _clear_config_cache()
     print(f"Config saved: {path}")
+    return 0
+
+
+def _cmd_config_add_level(args: argparse.Namespace) -> int:
+    from lore.config.loaders import save_config
+
+    path = _project_config_path()
+    if not path.parent.exists():
+        print(
+            "Not in a lore project. Run 'lore init --no-levels' first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    data = _load_json_file(path)
+    lore = data.setdefault("lore", {})
+    hierarchy = lore.setdefault("hierarchy", [])
+
+    for h in hierarchy:
+        if h.get("level") == args.level:
+            print(
+                f"Level {args.level} already exists. "
+                "Remove it first or use a different number.",
+                file=sys.stderr,
+            )
+            return 1
+
+    entry = _build_level_entry(
+        args.level,
+        args.repo,
+        args.branch,
+        args.name,
+        args.description,
+        args.writable,
+    )
+    hierarchy.append(entry)
+    hierarchy.sort(key=lambda h: h.get("level", 0))
+    save_config(path, data)
+
+    rw = "writable" if args.writable else "read-only"
+    print(f"Added level {args.level} ({args.name}, {rw})")
+    print(f"  repo: {args.repo}@{args.branch}")
+    if args.description:
+        print(f"  description: {args.description}")
+    print("\nRun 'lore sync --force' to pull knowledge from this level.")
     return 0
 
 
@@ -694,6 +805,151 @@ def _cmd_hook_nudge(args: argparse.Namespace) -> int:
 
 
 def _cmd_hook_capture(args: argparse.Namespace) -> int:
+    import sys
+
+    from lore.capture import capture_knowledge
+    from lore.config.manager import get_global_config, get_project_config
+    from lore.git import GitError, get_git_interface, key_to_path
+    from lore.llm import get_llm_provider
+    from lore.store.base import KnowledgeEntry
+
+    transcript = sys.stdin.read()
+    if not transcript.strip():
+        return 0
+
+    try:
+        cfg = get_global_config()
+        if cfg.llm.provider == "none":
+            return 0
+        provider = get_llm_provider()
+    except Exception as exc:
+        print(f"Capture skipped: {exc}", file=sys.stderr)
+        return 0
+
+    store = _get_store()
+    try:
+        project_cfg = get_project_config()
+    except Exception:
+        project_cfg = None
+
+    result = capture_knowledge(transcript, store, provider, project_cfg, cfg.capture)
+
+    if not result.candidates:
+        return 0
+
+    writable_levels = {}
+    if project_cfg:
+        for h in project_cfg.hierarchy:
+            if h.writable:
+                writable_levels[h.name] = (h.level, h.repo, h.branch)
+
+    stored = 0
+    prs = 0
+    negated = 0
+    proposed = []
+    out = sys.stderr
+
+    for c in result.new:
+        level_info = writable_levels.get(c.suggested_level)
+        if level_info and level_info[1]:
+            if cfg.capture.auto_pr_shared:
+                try:
+                    git_iface = get_git_interface(cfg.git.provider)
+                    tags_list = c.tags if isinstance(c.tags, list) else []
+                    fm = {"tags": tags_list, "created_by": "lore-capture"}
+                    git_iface.create_pr(
+                        repo_url=level_info[1],
+                        file_path=key_to_path(c.key),
+                        content=c.value,
+                        frontmatter=fm,
+                        title=f"lore: capture {c.key}",
+                        body="Auto-captured from session transcript",
+                        branch=level_info[2],
+                    )
+                    prs += 1
+                except GitError:
+                    pass
+            else:
+                proposed.append((c, c.suggested_level))
+        elif cfg.capture.auto_store_individual:
+            entry = KnowledgeEntry(
+                key=c.key,
+                value=c.value,
+                tags=",".join(c.tags) if c.tags else "",
+                level=0,
+                level_name="individual",
+            )
+            store.store(entry)
+            stored += 1
+        else:
+            proposed.append((c, "individual"))
+
+    for action in result.enrichments:
+        c = action.candidate
+        try:
+            store.update(
+                action.existing_key,
+                f"{action.existing_value}\n\n{c.value}",
+                reason=f"enriched via capture (dist={action.distance:.4f})",
+                actor="capture",
+                level=0,
+            )
+            print(
+                f"  [ENRICH] {action.existing_key} ← {c.key}",
+                file=out,
+            )
+            stored += 1
+        except (KeyError, ValueError):
+            pass
+
+    for c in result.updates:
+        try:
+            store.update(
+                c.key,
+                c.value,
+                reason="updated via session capture",
+                actor="capture",
+                level=0,
+            )
+            stored += 1
+        except (KeyError, ValueError):
+            pass
+
+    for c in result.negations:
+        if c.negate_key:
+            try:
+                store.negate(
+                    c.negate_key,
+                    c.negate_reason or "contradicted by session",
+                )
+                negated += 1
+            except (KeyError, ValueError):
+                pass
+
+    for action in result.skipped:
+        c = action.candidate
+        if action.action == "exact_match":
+            print(f"  [SKIP] {c.key} — already exists", file=out)
+        elif action.action == "rate_limited":
+            print(f"  [SKIP] {c.key} — rate limited", file=out)
+
+    print("\nKnowledge captured from session:", file=out)
+    if stored:
+        print(f"  {stored} stored", file=out)
+    if prs:
+        print(f"  {prs} PRs created", file=out)
+    if negated:
+        print(f"  {negated} negated", file=out)
+
+    for c, level in proposed:
+        snippet = c.value[:80].replace("\n", " ")
+        print(f"  [PROPOSE] {c.key} → {level} level", file=out)
+        print(f'    "{snippet}..."', file=out)
+        print(
+            f'    Run: lore store --key "{c.key}" --level {level}',
+            file=out,
+        )
+
     return 0
 
 
@@ -701,7 +957,12 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="lore", description="Lore knowledge server")
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("init", help="Initialize lore in current directory")
+    init_parser = sub.add_parser("init", help="Initialize lore in current directory")
+    init_parser.add_argument(
+        "--no-levels",
+        action="store_true",
+        help="Skip hierarchy level prompts (add later with lore config add-level)",
+    )
     sub.add_parser("mcp-server", help="Start MCP server (stdio transport)")
 
     sync_parser = sub.add_parser("sync", help="Sync knowledge repos")
@@ -741,6 +1002,29 @@ def main(argv: list[str] | None = None) -> None:
     edit_parser = config_sub.add_parser("edit", help="Open config in editor")
     edit_parser.add_argument(
         "--global", dest="global_", action="store_true", help="Edit global config"
+    )
+
+    add_level_parser = config_sub.add_parser(
+        "add-level", help="Add a hierarchy level to project config"
+    )
+    add_level_parser.add_argument(
+        "--level", type=int, required=True, help="Level number (1, 2, ...)"
+    )
+    add_level_parser.add_argument(
+        "--name", required=True, help="Level name (e.g. team, org)"
+    )
+    add_level_parser.add_argument("--repo", required=True, help="Git repo URL")
+    add_level_parser.add_argument(
+        "--branch", default="main", help="Git branch (default: main)"
+    )
+    add_level_parser.add_argument(
+        "--writable",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Allow agents to write (default: true)",
+    )
+    add_level_parser.add_argument(
+        "--description", default=None, help="Level description for LLM capture"
     )
 
     dashboard_parser = sub.add_parser("dashboard", help="Launch web dashboard")

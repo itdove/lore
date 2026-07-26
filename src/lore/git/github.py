@@ -78,7 +78,7 @@ class GitHubInterface(GitInterface):
         self, repo_url: str, target_dir: Path, branch: str = "main"
     ) -> str:
         url = repo_to_url(repo_url)
-        if not target_dir.exists():
+        if not (target_dir / ".git").exists():
             target_dir.parent.mkdir(parents=True, exist_ok=True)
             try:
                 subprocess.run(

@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
+from lore.config.loaders import (
+    _load_global_config_raw,
+    _load_json,
+    _load_project_config_raw,
+    save_config,
+)
+from lore.config.utils import config_path
 from lore.store.base import KnowledgeEntry, validate_key  # noqa: F401
 from lore.store.sqlite import SQLiteStore
 
@@ -33,9 +41,13 @@ def get_sync_status() -> dict:
 
 
 def trigger_sync():
+    from lore.store import get_store
     from lore.sync.helpers import run_sync
 
-    return run_sync(get_dashboard_store())
+    store = get_store()
+    result = run_sync(store)
+    reset_store()
+    return result
 
 
 def build_repo_file_url(entry: KnowledgeEntry) -> str | None:
@@ -66,6 +78,61 @@ def build_repo_file_url(entry: KnowledgeEntry) -> str | None:
         return f"{url}/-/blob/{branch}/{file_path}"
 
     return f"{url}/blob/{branch}/{file_path}"
+
+
+def is_level_writable(level: int) -> bool:
+    if level == 0:
+        return True
+    try:
+        from lore.config.manager import get_project_config
+
+        cfg = get_project_config()
+        for h in cfg.hierarchy:
+            if h.level == level:
+                return h.writable
+    except (FileNotFoundError, KeyError, ValueError):
+        pass
+    except Exception:
+        logger.warning(
+            "Failed to load project config for writable check", exc_info=True
+        )
+    return True
+
+
+def _global_config_path():
+    return config_path()
+
+
+def _project_config_path():
+    return Path.cwd() / ".lore" / "config.json"
+
+
+def load_raw_global_config() -> dict:
+    return _load_global_config_raw()
+
+
+def load_raw_project_config(project_dir: str | None = None) -> dict:
+    if project_dir:
+        return _load_json(Path(project_dir) / ".lore" / "config.json")
+    return _load_project_config_raw(Path.cwd())
+
+
+def save_global_config(data: dict) -> None:
+    save_config(_global_config_path(), data)
+
+
+def save_project_config(data: dict, project_dir: str | None = None) -> None:
+    path = (
+        Path(project_dir) / ".lore" / "config.json"
+        if project_dir
+        else _project_config_path()
+    )
+    save_config(path, data)
+
+
+def get_registered_projects() -> list[str]:
+    raw = load_raw_global_config()
+    return raw.get("lore", {}).get("projects", [])
 
 
 def promote_entry(entry: KnowledgeEntry) -> dict:

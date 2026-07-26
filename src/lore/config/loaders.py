@@ -117,3 +117,12 @@ def load_project_config(project_dir: Path) -> dict:
 
 def _clear_config_cache() -> None:
     _caches.clear()
+
+
+def save_config(path: Path, data: dict) -> None:
+    if path.exists():
+        bak = path.with_suffix(".json.bak")
+        bak.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    _clear_config_cache()

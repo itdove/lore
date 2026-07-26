@@ -7,7 +7,6 @@ import urllib.error
 import urllib.request
 
 from lore.llm.base import (
-    CAPTURE_PROMPT,
     SYNTHESIS_PROMPTS,
     KnowledgeCandidate,
     LLMProvider,
@@ -64,11 +63,17 @@ class OllamaProvider(LLMProvider):
         return result or "No relevant knowledge found."
 
     def extract_knowledge(
-        self, transcript: str, existing: list[KnowledgeEntry]
+        self,
+        transcript: str,
+        existing: list[KnowledgeEntry],
+        project_config=None,
     ) -> list[KnowledgeCandidate]:
+        from lore.llm.base import build_capture_prompt
+
         existing_text = "\n".join(f"- [{e.key}]: {e.value}" for e in existing)
+        capture_prompt = build_capture_prompt(project_config)
         prompt = (
-            f"{CAPTURE_PROMPT}\n\n"
+            f"{capture_prompt}\n\n"
             f"Existing knowledge:\n{existing_text}\n\n"
             f"Session transcript:\n{transcript}"
         )

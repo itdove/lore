@@ -29,8 +29,8 @@ When you see a `<lore-context>` block:
 - Obvious facts derivable from reading the code
 
 ## Key format
-Directory path in knowledge repo = key: type/domain/slug.md → type:domain:slug
-Examples: bug/auth/jwt-expiry, decision/arch/polars-migration, convention/naming/snake-case
+Colon-separated segments, 1 or more. Maps to file path: bug:api:jwt → bug/api/jwt.md
+Examples: jwt-leeway, bug:jwt-expiry, bug:auth:jwt-expiry, decision:arch:polars-migration
 
 ## Tags
 [bug, decision, pattern, convention, planned]

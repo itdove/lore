@@ -9,9 +9,11 @@ from lore.config.loaders import (
     load_project_config,
 )
 from lore.config.models import (
+    CaptureConfig,
     GitConfig,
     GlobalConfig,
     HierarchyLevel,
+    KeyStructure,
     LLMConfig,
     ProjectConfig,
     SearchConfig,
@@ -19,7 +21,41 @@ from lore.config.models import (
     SyncConfig,
 )
 
-_GLOBAL_ONLY_KEYS: frozenset[str] = frozenset()
+GLOBAL_ONLY_SUBKEYS: frozenset[str] = frozenset(
+    {
+        "store.path",
+        "store.type",
+        "search.embedding_provider",
+        "search.embedding_model",
+        "search.embedding_base_url",
+    }
+)
+
+
+def _strip_global_only(overlay: dict) -> dict:
+    found = []
+    result = {}
+    for section, values in overlay.items():
+        if not isinstance(values, dict):
+            result[section] = values
+            continue
+        filtered = {}
+        for k, v in values.items():
+            subkey = f"{section}.{k}"
+            if subkey in GLOBAL_ONLY_SUBKEYS:
+                found.append(subkey)
+            else:
+                filtered[k] = v
+        if filtered:
+            result[section] = filtered
+    if found:
+        keys_str = ", ".join(sorted(found))
+        warnings.warn(
+            f"Project config contains global-only settings: {keys_str}. "
+            "Use 'lore config set' to move them to global config.",
+            stacklevel=3,
+        )
+    return result
 
 
 def _parse_sub_config(cls, data: dict | None):
@@ -42,11 +78,8 @@ def get_global_config(project_dir: Path | None = None) -> GlobalConfig:
     lore = raw.get("lore", {})
 
     project_raw = load_project_config(project_dir or Path.cwd())
-    project_overlay = {
-        k: v
-        for k, v in project_raw.get("lore", {}).items()
-        if k not in _GLOBAL_ONLY_KEYS
-    }
+    project_lore = project_raw.get("lore", {})
+    project_overlay = _strip_global_only(project_lore)
     lore = deep_merge(lore, project_overlay)
 
     return GlobalConfig(
@@ -56,6 +89,7 @@ def get_global_config(project_dir: Path | None = None) -> GlobalConfig:
         search=_parse_sub_config(SearchConfig, lore.get("search")),
         git=_parse_sub_config(GitConfig, lore.get("git")),
         sync=_parse_sub_config(SyncConfig, lore.get("sync")),
+        capture=_parse_sub_config(CaptureConfig, lore.get("capture")),
     )
 
 
@@ -79,7 +113,25 @@ def get_project_config(project_dir: str | Path | None = None) -> ProjectConfig:
                 repo=entry["repo"],
                 branch=entry.get("branch", "main"),
                 name=entry.get("name"),
+                writable=entry.get("writable", True),
+                description=entry.get("description"),
             )
         )
 
-    return ProjectConfig(hierarchy=hierarchy)
+    ks_raw = lore.get("key_structure", {})
+    key_structure = KeyStructure(
+        description=ks_raw.get(
+            "description",
+            "Keys use colon-separated segments from general to specific",
+        ),
+        examples=ks_raw.get("examples", []),
+    )
+
+    return ProjectConfig(
+        hierarchy=hierarchy,
+        individual_description=lore.get(
+            "individual_description",
+            "Personal notes, local discoveries, work-in-progress findings.",
+        ),
+        key_structure=key_structure,
+    )

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -8,8 +10,12 @@ import pytest
 from lore.dashboard.state import (
     build_repo_file_url,
     get_dashboard_store,
+    load_raw_global_config,
+    load_raw_project_config,
     promote_entry,
     reset_store,
+    save_global_config,
+    save_project_config,
     validate_key,
 )
 from lore.store.base import KnowledgeEntry
@@ -49,8 +55,14 @@ class TestValidateKey:
     def test_valid_with_underscores(self):
         assert validate_key("config:db_pool:max_size") is None
 
-    def test_invalid_missing_segment(self):
-        assert validate_key("type:domain") is not None
+    def test_valid_single_segment(self):
+        assert validate_key("jwt-leeway") is None
+
+    def test_valid_two_segments(self):
+        assert validate_key("bug:jwt") is None
+
+    def test_valid_four_segments(self):
+        assert validate_key("a:b:c:d") is None
 
     def test_invalid_empty(self):
         assert validate_key("") is not None
@@ -58,8 +70,8 @@ class TestValidateKey:
     def test_invalid_spaces(self):
         assert validate_key("type:do main:slug") is not None
 
-    def test_invalid_four_segments(self):
-        assert validate_key("a:b:c:d") is not None
+    def test_invalid_special_chars(self):
+        assert validate_key("bug:api/jwt") is not None
 
 
 class TestBuildRepoFileUrl:
@@ -122,6 +134,43 @@ class TestBuildRepoFileUrl:
         )
         url = build_repo_file_url(entry)
         assert "/blob/main/" in url
+
+
+class TestConfigReadWrite:
+    def test_save_and_load_global(self, tmp_path):
+        from lore.config.loaders import _clear_config_cache
+
+        with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(tmp_path)}):
+            _clear_config_cache()
+            save_global_config({"lore": {"llm": {"provider": "ollama"}}})
+            _clear_config_cache()
+            loaded = load_raw_global_config()
+            assert loaded["lore"]["llm"]["provider"] == "ollama"
+
+    def test_save_creates_backup(self, tmp_path):
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text('{"old": true}', encoding="utf-8")
+        bak_path = cfg_path.with_suffix(".json.bak")
+
+        with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(tmp_path)}):
+            save_global_config({"new": True})
+            assert bak_path.exists()
+            assert json.loads(bak_path.read_text()) == {"old": True}
+
+    def test_save_and_load_project(self, tmp_path):
+        project_dir = tmp_path / "proj"
+        (project_dir / ".lore").mkdir(parents=True)
+        with mock.patch.object(Path, "cwd", return_value=project_dir):
+            save_project_config({"lore": {"hierarchy": [{"level": 1, "repo": "x"}]}})
+            loaded = load_raw_project_config()
+            assert len(loaded["lore"]["hierarchy"]) == 1
+
+    def test_load_missing_returns_empty(self, tmp_path):
+        from lore.config.loaders import _clear_config_cache
+
+        with mock.patch.dict(os.environ, {"LORE_CONFIG_DIR": str(tmp_path / "empty")}):
+            _clear_config_cache()
+            assert load_raw_global_config() == {}
 
 
 class TestPromoteEntry:

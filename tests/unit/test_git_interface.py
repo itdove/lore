@@ -105,6 +105,7 @@ def test_clone_or_pull_pulls_existing(tmp_path):
     iface = GitHubInterface()
     target = tmp_path / "repo"
     target.mkdir()
+    (target / ".git").mkdir()
 
     with mock.patch("subprocess.run") as mock_run:
         mock_run.return_value = mock.Mock(stdout="def456\n", returncode=0)
@@ -113,6 +114,22 @@ def test_clone_or_pull_pulls_existing(tmp_path):
     assert sha == "def456"
     call_cmds = [c[0][0] for c in mock_run.call_args_list]
     assert any("fetch" in cmd for cmd in call_cmds)
+
+
+def test_clone_or_pull_clones_when_dir_exists_without_git(tmp_path):
+    """mkdtemp creates dir before clone — should clone, not fetch."""
+    iface = GitHubInterface()
+    target = tmp_path / "repo"
+    target.mkdir()
+
+    with mock.patch("subprocess.run") as mock_run:
+        mock_run.return_value = mock.Mock(stdout="abc123\n", returncode=0)
+        sha = iface.clone_or_pull("github.com/org/repo", target, "main")
+
+    assert sha == "abc123"
+    calls = mock_run.call_args_list
+    assert calls[0][0][0][0] == "git"
+    assert "clone" in calls[0][0][0]
 
 
 def test_clone_or_pull_clone_error(tmp_path):

@@ -2,8 +2,21 @@ from __future__ import annotations
 
 import pytest
 
+from lore.embedding.base import EmbeddingProvider
 from lore.store.base import KnowledgeEntry
 from lore.store.sqlite import SQLiteStore, create_schema
+
+
+class _FixedEmbedding(EmbeddingProvider):
+    def embed(self, text: str) -> list[float]:
+        return [0.5] * 8
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        return [[0.5] * 8 for _ in texts]
+
+    @property
+    def dimensions(self) -> int:
+        return 8
 
 
 @pytest.fixture
@@ -412,18 +425,21 @@ def test_store_knowledge_individual(tools, store):
     assert entry.level == 0
 
 
-def test_store_knowledge_invalid_key(tools):
+def test_store_knowledge_valid_single_segment(tools, store):
+    result = tools["store_knowledge"](key="jwt-leeway", value="val")
+    assert result["key"] == "jwt-leeway"
+
+
+def test_store_knowledge_valid_two_segments(tools, store):
+    result = tools["store_knowledge"](key="bug:jwt", value="val")
+    assert result["key"] == "bug:jwt"
+
+
+def test_store_knowledge_invalid_key_spaces(tools):
     import pytest
 
     with pytest.raises(ValueError, match="Invalid key format"):
-        tools["store_knowledge"](key="bad-key", value="val")
-
-
-def test_store_knowledge_invalid_key_too_few(tools):
-    import pytest
-
-    with pytest.raises(ValueError, match="Invalid key format"):
-        tools["store_knowledge"](key="only:two", value="val")
+        tools["store_knowledge"](key="bad key!", value="val")
 
 
 def test_store_knowledge_invalid_key_empty_part(tools):
@@ -478,9 +494,20 @@ def test_store_knowledge_update_does_not_corrupt_other_levels(tools, store):
     assert shared[0].value == "shared"
 
 
-def test_store_knowledge_shared_level(tools, store, monkeypatch):
+def test_store_knowledge_shared_level_creates_pr_only(tools, store, monkeypatch):
     import lore.mcp.server as srv
     from lore.config.models import HierarchyLevel, ProjectConfig
+    from lore.git.base import GitInterface
+
+    class _MockGit(GitInterface):
+        def clone_or_pull(self, repo_url, target_dir, branch="main"):
+            return "abc123"
+
+        def create_pr(self, **kwargs):
+            return "https://github.com/org/repo/pull/99"
+
+        def get_pr_status(self, pr_url):
+            return "open"
 
     monkeypatch.setattr(
         srv,
@@ -491,6 +518,7 @@ def test_store_knowledge_shared_level(tools, store, monkeypatch):
             ]
         ),
     )
+    monkeypatch.setattr("lore.mcp.server.get_git_interface", lambda _: _MockGit())
 
     result = tools["store_knowledge"](
         key="guide:onboard:setup",
@@ -499,11 +527,10 @@ def test_store_knowledge_shared_level(tools, store, monkeypatch):
         level="team",
     )
     assert result["level"] == 1
-    assert result["pr_url"] is None  # stub
+    assert result["pr_url"] == "https://github.com/org/repo/pull/99"
 
     entry = store.get("guide:onboard:setup")
-    assert entry.level == 1
-    assert entry.level_name == "team"
+    assert entry is None
 
 
 def test_store_knowledge_unknown_level(tools, monkeypatch):
@@ -516,6 +543,108 @@ def test_store_knowledge_unknown_level(tools, monkeypatch):
 
     with pytest.raises(ValueError, match="Unknown level"):
         tools["store_knowledge"](key="a:b:c", value="val", level="nonexistent")
+
+
+def test_store_knowledge_readonly_level_rejected(tools, monkeypatch):
+    import lore.mcp.server as srv
+    from lore.config.models import HierarchyLevel, ProjectConfig
+
+    monkeypatch.setattr(
+        srv,
+        "get_project_config",
+        lambda: ProjectConfig(
+            hierarchy=[
+                HierarchyLevel(
+                    level=2,
+                    repo="org/repo",
+                    branch="main",
+                    name="org",
+                    writable=False,
+                )
+            ]
+        ),
+    )
+
+    with pytest.raises(ValueError, match="read-only"):
+        tools["store_knowledge"](key="a:b:c", value="val", level="org")
+
+
+def test_negate_knowledge_readonly_level_rejected(tools, store, monkeypatch):
+    import lore.mcp.server as srv
+    from lore.config.models import HierarchyLevel, ProjectConfig
+
+    store.store(_make_entry(key="fact:db:engine", value="PostgreSQL", level=2))
+
+    monkeypatch.setattr(
+        srv,
+        "get_project_config",
+        lambda: ProjectConfig(
+            hierarchy=[
+                HierarchyLevel(
+                    level=2,
+                    repo="org/repo",
+                    branch="main",
+                    name="org",
+                    writable=False,
+                )
+            ]
+        ),
+    )
+
+    with pytest.raises(ValueError, match="read-only"):
+        tools["negate_knowledge"](key="fact:db:engine", reason="wrong", level="org")
+
+
+def test_delete_knowledge_readonly_level_rejected(tools, store, monkeypatch):
+    import lore.mcp.server as srv
+    from lore.config.models import HierarchyLevel, ProjectConfig
+
+    store.store(_make_entry(key="fact:db:engine", value="PostgreSQL", level=2))
+
+    monkeypatch.setattr(
+        srv,
+        "get_project_config",
+        lambda: ProjectConfig(
+            hierarchy=[
+                HierarchyLevel(
+                    level=2,
+                    repo="org/repo",
+                    branch="main",
+                    name="org",
+                    writable=False,
+                )
+            ]
+        ),
+    )
+
+    with pytest.raises(ValueError, match="read-only"):
+        tools["delete_knowledge"](key="fact:db:engine", level="org")
+
+
+def test_store_knowledge_writable_level_allowed(tools, store, monkeypatch):
+    import lore.mcp.server as srv
+    from lore.config.models import HierarchyLevel, ProjectConfig
+
+    monkeypatch.setattr(
+        srv,
+        "get_project_config",
+        lambda: ProjectConfig(
+            hierarchy=[
+                HierarchyLevel(
+                    level=1,
+                    repo="org/repo",
+                    branch="main",
+                    name="team",
+                    writable=True,
+                )
+            ]
+        ),
+    )
+
+    result = tools["store_knowledge"](
+        key="guide:onboard:ok", value="works", level="team"
+    )
+    assert result["level"] == 1
 
 
 def test_store_knowledge_history_logged(tools, store):
@@ -694,6 +823,84 @@ def test_store_knowledge_with_embedding(store, monkeypatch):
     assert "id" in result
     entry = store.get("test:new:entry")
     assert entry is not None
+
+
+def test_store_knowledge_dedup_skips_cross_level(store, monkeypatch):
+    """Dedup must not block team-level store when individual entry exists."""
+    import lore.mcp.server as srv
+    from lore.config.models import (
+        GlobalConfig,
+        HierarchyLevel,
+        ProjectConfig,
+        SearchConfig,
+    )
+
+    cfg = GlobalConfig(
+        search=SearchConfig(embedding_provider="ollama", dedup_threshold=0.20)
+    )
+    monkeypatch.setattr(srv, "_get_store", lambda: store)
+    monkeypatch.setattr(srv, "_get_embedding_provider", lambda: _FixedEmbedding())
+    monkeypatch.setattr(srv, "get_global_config", lambda: cfg)
+    monkeypatch.setattr(
+        srv,
+        "get_project_config",
+        lambda: ProjectConfig(
+            hierarchy=[
+                HierarchyLevel(
+                    level=1,
+                    repo="org/repo",
+                    branch="main",
+                    name="team",
+                    writable=True,
+                )
+            ]
+        ),
+    )
+
+    server = srv.create_server()
+    tool_map = {}
+    for tool in server._tool_manager._tools.values():
+        tool_map[tool.name] = tool.fn
+
+    tool_map["store_knowledge"](
+        key="bug:deploy:cache", value="docker layer cache", tags="deploy"
+    )
+
+    result = tool_map["store_knowledge"](
+        key="bug:deploy:similar",
+        value="docker layer cache v2",
+        tags="deploy",
+        level="team",
+    )
+    assert result.get("deduplicated") is not True
+    assert result["level"] == 1
+
+
+def test_store_knowledge_dedup_works_same_level(store, monkeypatch):
+    """Dedup still works within same level."""
+    import lore.mcp.server as srv
+    from lore.config.models import GlobalConfig, SearchConfig
+
+    cfg = GlobalConfig(
+        search=SearchConfig(embedding_provider="ollama", dedup_threshold=0.20)
+    )
+    monkeypatch.setattr(srv, "_get_store", lambda: store)
+    monkeypatch.setattr(srv, "_get_embedding_provider", lambda: _FixedEmbedding())
+    monkeypatch.setattr(srv, "get_global_config", lambda: cfg)
+
+    server = srv.create_server()
+    tool_map = {}
+    for tool in server._tool_manager._tools.values():
+        tool_map[tool.name] = tool.fn
+
+    tool_map["store_knowledge"](
+        key="bug:deploy:cache", value="docker layer cache", tags="deploy"
+    )
+    result = tool_map["store_knowledge"](
+        key="bug:deploy:other", value="docker layer cache same", tags="deploy"
+    )
+    assert result.get("deduplicated") is True
+    assert result["level"] == 0
 
 
 def test_query_knowledge_fts_fallback(store, monkeypatch):

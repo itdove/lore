@@ -21,7 +21,7 @@ class _MockProvider(LLMProvider):
     def synthesize(self, topic, candidates):
         return "mock synthesis"
 
-    def extract_knowledge(self, transcript, existing):
+    def extract_knowledge(self, transcript, existing, project_config=None):
         return self._candidates
 
 
@@ -50,7 +50,7 @@ def test_capture_passes_existing_to_provider(store, monkeypatch):
         def synthesize(self, topic, candidates):
             return ""
 
-        def extract_knowledge(self, transcript, existing):
+        def extract_knowledge(self, transcript, existing, project_config=None):
             received["existing"] = existing
             return []
 

@@ -4,14 +4,15 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-_KEY_RE = re.compile(r"^[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+$")
+_KEY_RE = re.compile(r"^[a-zA-Z0-9_-]+(:[a-zA-Z0-9_-]+)*$")
 
 
 def validate_key(key: str) -> str | None:
     if not _KEY_RE.match(key):
         return (
-            "Invalid key format. Expected 'type:domain:slug' "
-            "with alphanumeric, hyphens, underscores."
+            "Invalid key format. Use colon-separated segments "
+            "(e.g., 'topic', 'bug:jwt', 'bug:api:jwt'). "
+            "Alphanumeric, hyphens, underscores only."
         )
     return None
 
