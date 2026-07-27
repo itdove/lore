@@ -11,6 +11,7 @@ from lore.config.loaders import (
     load_project_config,
 )
 from lore.config.models import (
+    IMPLICIT_LEVELS,
     CaptureConfig,
     GitConfig,
     GlobalConfig,
@@ -118,7 +119,7 @@ def get_project_config(project_dir: str | Path | None = None) -> ProjectConfig:
     for entry in hierarchy_raw:
         if "level" not in entry or "repo" not in entry:
             continue
-        if entry["level"] < 2:
+        if entry["level"] in IMPLICIT_LEVELS:
             logger.warning(
                 "Skipping hierarchy entry with level %d (repo=%s): "
                 "levels 0-1 reserved for implicit individual/project",

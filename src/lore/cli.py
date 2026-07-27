@@ -6,6 +6,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from lore.config.models import IMPLICIT_LEVELS
+
 _RECALL_PREAMBLE = "IMPORTANT: The following team knowledge is relevant to this prompt."
 
 
@@ -501,7 +503,7 @@ def _build_hierarchy_filters(
 ) -> tuple[list[int] | None, list[tuple[str, str]] | None]:
     from lore.config.utils import get_project_remote
 
-    levels = [1]
+    levels: list[int] = []
     repos: list[tuple[str, str]] = []
     remote = get_project_remote()
     if remote[0]:
@@ -662,7 +664,7 @@ def _cmd_config_add_level(args: argparse.Namespace) -> int:
         )
         return 1
 
-    if args.level < 2:
+    if args.level in IMPLICIT_LEVELS:
         print(
             "Levels 0 and 1 are reserved (individual and project). Use 2+.",
             file=sys.stderr,
