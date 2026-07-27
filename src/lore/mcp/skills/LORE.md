@@ -42,6 +42,7 @@ Good: "use snake_case — matches Postgres schema naming"
 ## Level selection
 When storing, choose the appropriate level:
 - individual: personal preference or local discovery
+- project: project-specific knowledge useful to any teammate on this project
 - team: team-wide pattern or convention
 - product: cross-repo architectural decision
 - org: company-wide standard

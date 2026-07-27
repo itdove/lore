@@ -205,13 +205,13 @@ class SQLiteStore(StoreBackend):
         params: list = []
 
         if filter_levels is not None:
-            levels = sorted(set(filter_levels) | {0})
+            levels = sorted(set(filter_levels) | {0, 1})
             placeholders = ", ".join("?" for _ in levels)
             conditions.append(f"{p}level IN ({placeholders})")
             params.extend(levels)
 
         if filter_repos is not None:
-            repo_clauses = [f"{p}level = 0"]
+            repo_clauses = [f"{p}level = 0", f"{p}level = 1"]
             for repo_url, repo_branch in filter_repos:
                 repo_clauses.append(f"({p}repo_url = ? AND {p}repo_branch = ?)")
                 params.extend([repo_url, repo_branch])

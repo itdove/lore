@@ -99,4 +99,8 @@ class ProjectConfig:
         "session: local discoveries, work-in-progress findings, "
         "project-specific patterns not yet validated for the team."
     )
+    project_description: str = (
+        "Store here when knowledge is project-specific and useful to "
+        "anyone working on this project: conventions, gotchas, decisions."
+    )
     key_structure: KeyStructure = field(default_factory=KeyStructure)

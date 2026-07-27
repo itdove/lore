@@ -116,19 +116,19 @@ def test_get_project_config_with_hierarchy(tmp_path):
                 "lore": {
                     "hierarchy": [
                         {
-                            "level": 1,
+                            "level": 2,
                             "name": "team",
                             "repo": "github.com/org/k",
                             "branch": "team",
                         },
                         {
-                            "level": 2,
+                            "level": 3,
                             "name": "product",
                             "repo": "github.com/org/k",
                             "branch": "product",
                         },
                         {
-                            "level": 3,
+                            "level": 4,
                             "name": "company",
                             "repo": "github.com/org/k",
                             "branch": "org",
@@ -140,11 +140,11 @@ def test_get_project_config_with_hierarchy(tmp_path):
     )
     pc = get_project_config(tmp_path)
     assert len(pc.hierarchy) == 3
-    assert pc.hierarchy[0].level == 1
+    assert pc.hierarchy[0].level == 2
     assert pc.hierarchy[0].name == "team"
     assert pc.hierarchy[0].repo == "github.com/org/k"
     assert pc.hierarchy[0].branch == "team"
-    assert pc.hierarchy[2].level == 3
+    assert pc.hierarchy[2].level == 4
     assert pc.hierarchy[2].branch == "org"
 
 
@@ -157,7 +157,7 @@ def test_get_project_config_defaults_branch(tmp_path):
             {
                 "lore": {
                     "hierarchy": [
-                        {"level": 1, "repo": "github.com/team/knowledge"},
+                        {"level": 2, "repo": "github.com/team/knowledge"},
                     ]
                 }
             }
@@ -177,10 +177,10 @@ def test_get_project_config_skips_invalid_entries(tmp_path):
             {
                 "lore": {
                     "hierarchy": [
-                        {"level": 1, "repo": "github.com/org/k"},
-                        {"level": 2},
+                        {"level": 2, "repo": "github.com/org/k"},
+                        {"level": 3},
                         {"repo": "missing-level"},
-                        {"level": 3, "repo": "github.com/org/k2"},
+                        {"level": 4, "repo": "github.com/org/k2"},
                     ]
                 }
             }
@@ -188,8 +188,8 @@ def test_get_project_config_skips_invalid_entries(tmp_path):
     )
     pc = get_project_config(tmp_path)
     assert len(pc.hierarchy) == 2
-    assert pc.hierarchy[0].level == 1
-    assert pc.hierarchy[1].level == 3
+    assert pc.hierarchy[0].level == 2
+    assert pc.hierarchy[1].level == 4
 
 
 def test_get_global_config_sync_object(tmp_path):
@@ -471,3 +471,30 @@ def test_capture_enabled_env_var_overrides_config(tmp_path):
         cfg.write_text(json.dumps({"lore": {"capture": {"enabled": True}}}))
         gc = get_global_config()
         assert gc.capture.enabled is False
+
+
+def test_get_project_config_rejects_level_below_2(tmp_path, caplog):
+    lore_dir = tmp_path / ".lore"
+    lore_dir.mkdir()
+    (lore_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "lore": {
+                    "hierarchy": [
+                        {"level": 1, "repo": "org/bad", "name": "reserved"},
+                        {"level": 2, "repo": "org/good", "name": "team"},
+                    ]
+                }
+            }
+        )
+    )
+
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        cfg = get_project_config(tmp_path)
+
+    assert len(cfg.hierarchy) == 1
+    assert cfg.hierarchy[0].level == 2
+    assert cfg.hierarchy[0].name == "team"
+    assert "reserved" in caplog.text or "levels 0-1" in caplog.text

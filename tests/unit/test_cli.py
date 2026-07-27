@@ -15,6 +15,15 @@ from lore.store.base import KnowledgeEntry
 from lore.store.sqlite import SQLiteStore, create_schema
 
 
+@pytest.fixture(autouse=True)
+def _mock_project_remote():
+    with mock.patch(
+        "lore.config.utils.get_project_remote",
+        return_value=(None, None),
+    ):
+        yield
+
+
 @pytest.fixture
 def store():
     conn = create_schema(":memory:")
@@ -291,27 +300,47 @@ def test_search_no_results(store, capsys):
 
 
 def test_search_priority_resolution(store, capsys):
+    from lore.config.models import HierarchyLevel
+
     store.store(
         _make_entry(
-            key="conv:naming", value="use camelCase", level=1, level_name="team"
+            key="conv:naming",
+            value="use camelCase",
+            level=2,
+            level_name="team",
+            repo_url="org/team-repo",
+            repo_branch="main",
         )
     )
     store.store(
         _make_entry(
-            key="conv:naming", value="use snake_case", level=2, level_name="org"
+            key="conv:naming",
+            value="use snake_case",
+            level=3,
+            level_name="org",
+            repo_url="org/org-repo",
+            repo_branch="main",
         )
     )
 
+    hierarchy = [
+        HierarchyLevel(level=2, repo="org/team-repo", name="team"),
+        HierarchyLevel(level=3, repo="org/org-repo", name="org"),
+    ]
     with mock.patch("lore.cli._get_store", return_value=store):
         with mock.patch(
             "lore.config.manager.get_project_config",
-            return_value=mock.MagicMock(hierarchy=[]),
+            return_value=mock.MagicMock(hierarchy=hierarchy),
         ):
-            import argparse
+            with mock.patch(
+                "lore.config.utils.get_project_remote",
+                return_value=(None, None),
+            ):
+                import argparse
 
-            from lore.cli import _cmd_search
+                from lore.cli import _cmd_search
 
-            rc = _cmd_search(argparse.Namespace(topic="naming"))
+                rc = _cmd_search(argparse.Namespace(topic="naming"))
 
     assert rc == 0
     out = capsys.readouterr().out

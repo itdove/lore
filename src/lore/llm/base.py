@@ -70,7 +70,7 @@ DOC_CHUNK_PROMPT = (
     "- summary: concise knowledge entry (include WHY, not just WHAT)\n"
     "- tags: relevant tags as a list\n"
     "- content_type: one of decision, convention, bug_pattern, general\n"
-    "- suggested_level: individual, team, or org\n"
+    "- suggested_level: individual, project, team, or org\n"
     "\n"
     "Skip: table of contents, boilerplate headers, navigation links.\n"
     "Output as JSON array."
@@ -104,7 +104,15 @@ def build_capture_prompt(
     parts = [CAPTURE_PROMPT_BASE]
 
     if project_config is not None:
-        level_lines = [f"- individual: {project_config.individual_description}"]
+        project_desc = getattr(
+            project_config,
+            "project_description",
+            "Project-specific knowledge useful to any teammate on this project",
+        )
+        level_lines = [
+            f"- individual: {project_config.individual_description}",
+            f"- project (level 1, writable): {project_desc}",
+        ]
         for h in project_config.hierarchy:
             rw = "writable" if h.writable else "read-only"
             name = h.name or f"level-{h.level}"

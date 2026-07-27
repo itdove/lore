@@ -64,6 +64,8 @@ def _build_level_entry(
 
 
 def _prompt_hierarchy_interactive() -> list[dict]:
+    print("  Levels 0 (individual) and 1 (project) are implicit.")
+    print("  Configure cross-project shared levels (2+):")
     try:
         count_str = input("How many shared levels? [0]: ").strip()
     except (EOFError, KeyboardInterrupt):
@@ -79,7 +81,7 @@ def _prompt_hierarchy_interactive() -> list[dict]:
         return []
 
     hierarchy = []
-    for i in range(1, count + 1):
+    for i in range(2, count + 2):
         print(f"\n--- Level {i} ---")
         try:
             repo = input("  Repo URL: ").strip()
@@ -276,6 +278,13 @@ def _cmd_init(args: argparse.Namespace) -> int:
         hierarchy = _prompt_hierarchy(global_cfg)
     _write_project_config(hierarchy)
     print(f"  Project config written ({len(hierarchy)} hierarchy levels)")
+
+    knowledge_dir = Path.cwd() / ".lore" / "knowledge"
+    knowledge_dir.mkdir(parents=True, exist_ok=True)
+    gitkeep = knowledge_dir / ".gitkeep"
+    if not gitkeep.exists():
+        gitkeep.touch()
+    print("  Project knowledge directory ready (.lore/knowledge/)")
 
     global_cfg = _prompt_global_providers(global_cfg)
     print("  Global providers configured")
@@ -490,12 +499,17 @@ def _resolve_config_path(use_global: bool) -> Path | None:
 def _build_hierarchy_filters(
     hierarchy: list,
 ) -> tuple[list[int] | None, list[tuple[str, str]] | None]:
-    if not hierarchy:
-        return None, None
-    return (
-        [h.level for h in hierarchy],
-        [(h.repo, h.branch) for h in hierarchy],
-    )
+    from lore.config.utils import get_project_remote
+
+    levels = [1]
+    repos: list[tuple[str, str]] = []
+    remote = get_project_remote()
+    if remote[0]:
+        repos.append(remote)
+    for h in hierarchy:
+        levels.append(h.level)
+        repos.append((h.repo, h.branch))
+    return levels, repos or None
 
 
 def _load_json_file(path: Path) -> dict:
@@ -648,6 +662,13 @@ def _cmd_config_add_level(args: argparse.Namespace) -> int:
         )
         return 1
 
+    if args.level < 2:
+        print(
+            "Levels 0 and 1 are reserved (individual and project). Use 2+.",
+            file=sys.stderr,
+        )
+        return 1
+
     data = _load_json_file(path)
     lore = data.setdefault("lore", {})
     hierarchy = lore.setdefault("hierarchy", [])
@@ -787,7 +808,9 @@ def _cmd_hook_recall(args: argparse.Namespace) -> int:
 
         store = _get_store()
         project_cfg = get_project_config()
-        filter_levels, filter_repos = _build_hierarchy_filters(project_cfg.hierarchy)
+        filter_levels, filter_repos = _build_hierarchy_filters(
+            project_cfg.hierarchy,
+        )
 
         raw = store.query_fts(
             prompt, limit=10, filter_levels=filter_levels, filter_repos=filter_repos

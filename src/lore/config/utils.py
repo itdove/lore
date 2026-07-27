@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 
@@ -58,3 +59,57 @@ def is_configured() -> bool:
 
 def is_project() -> bool:
     return (Path.cwd() / ".lore").is_dir()
+
+
+_project_remote_cache: dict[str | None, tuple[str | None, str | None]] = {}
+
+
+def get_project_remote(
+    project_path: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Return (repo_url, default_branch) for a project's git remote.
+
+    Returns (None, None) if no git remote exists.
+    Results are cached by project_path for the process lifetime.
+    """
+    if project_path in _project_remote_cache:
+        return _project_remote_cache[project_path]
+
+    cwd = project_path
+    try:
+        url = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=cwd,
+            timeout=30,
+        ).stdout.strip()
+    except (
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+    ):
+        _project_remote_cache[project_path] = (None, None)
+        return None, None
+
+    try:
+        ref = subprocess.run(
+            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=cwd,
+            timeout=30,
+        ).stdout.strip()
+        branch = ref.rsplit("/", 1)[-1]
+    except (
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+    ):
+        branch = "main"
+
+    result = (url, branch)
+    _project_remote_cache[project_path] = result
+    return result

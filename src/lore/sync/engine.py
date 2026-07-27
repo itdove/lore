@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 from lore.config.manager import get_global_config, get_project_config
+from lore.config.utils import get_project_remote
 from lore.embedding import EmbeddingProvider, get_embedding_provider
 from lore.embedding.base import embed_to_blob
 from lore.store.base import KnowledgeEntry, StoreBackend
@@ -42,12 +45,11 @@ class SyncEngine:
             except Exception:
                 logger.warning("Failed to init embedding provider", exc_info=True)
 
-        repo_levels = self._collect_hierarchy(projects)
-        if not repo_levels:
-            self._log.write(result)
-            return result
-
         sync_states = self._state.load()
+
+        self._sync_project_levels(projects, sync_states, emb_provider, result, now)
+
+        repo_levels = self._collect_hierarchy(projects)
 
         for (repo, branch), (level, level_name) in repo_levels.items():
             try:
@@ -60,77 +62,18 @@ class SyncEngine:
             repo_hash = GitRepoManager.repo_dir_hash(repo, branch)
             repo_path = self._git.repo_path(repo, branch)
 
-            parsed_files = scan_repo(repo_path)
-            current_keys: set[str] = set()
-            new_hashes: dict[str, str] = {}
-
-            old_state = sync_states.get(repo_hash)
-            changed: list[ParsedFile] = []
-            for pf in parsed_files:
-                current_keys.add(pf.key)
-                new_hashes[pf.file_path] = pf.content_hash
-                if (
-                    old_state
-                    and old_state.file_hashes.get(pf.file_path) == pf.content_hash
-                ):
-                    continue
-                changed.append(pf)
-
-            changed_keys = {pf.key for pf in changed}
-            conflicts_by_key = self._store.find_conflicts_batch(changed_keys, level)
-
-            embeddings = self._batch_embed(changed, emb_provider)
-
-            for pf in changed:
-                entry = self._build_entry(
-                    pf,
-                    level,
-                    level_name,
-                    repo,
-                    branch,
-                    commit_sha,
-                    embeddings.get(pf.key),
-                )
-
-                others = conflicts_by_key.get(pf.key, [])
-
-                entry_id, action = self._store.sync_upsert(entry, pre_conflicts=others)
-                if action == "blocked":
-                    blocker = next(
-                        o for o in others if o.locked and o.level < entry.level
-                    )
-                    result.blocked += 1
-                    result.details.append(
-                        f"[!] {pf.key} blocked by locked {blocker.level_label} entry"
-                    )
-                    continue
-                if action == "created":
-                    result.created += 1
-                    result.details.append(f"[+] {pf.key} ({pf.file_path})")
-                else:
-                    result.updated += 1
-                    result.details.append(f"[~] {pf.key} ({pf.file_path})")
-
-                self._resolve_conflicts(entry_id, entry, pf, result, others)
-
-            existing = self._store.list_by_repo(repo, branch)
-            for entry in existing:
-                if entry.key not in current_keys:
-                    self._store.clear_conflict(entry.id)
-                    self._store.delete_by_source(
-                        entry.key, repo, branch, "file removed from repo", "sync"
-                    )
-                    result.deleted += 1
-                    result.details.append(f"[-] {entry.key}")
-
-            self._store.commit()
-
-            sync_states[repo_hash] = RepoSyncState(
-                repo=repo,
-                branch=branch,
-                last_commit=commit_sha,
-                last_sync=now,
-                file_hashes=new_hashes,
+            self._sync_one_repo(
+                scan_dir=repo_path,
+                level=level,
+                level_name=level_name,
+                repo_id=repo,
+                branch_id=branch,
+                commit_sha=commit_sha,
+                repo_hash=repo_hash,
+                sync_states=sync_states,
+                emb_provider=emb_provider,
+                result=result,
+                now=now,
             )
 
         promoted = self._store.delete_promoted_locals()
@@ -142,6 +85,136 @@ class SyncEngine:
         self._state.save(sync_states)
         self._log.write(result)
         return result
+
+    def _sync_project_levels(
+        self,
+        projects: list[str],
+        sync_states: dict[str, RepoSyncState],
+        emb_provider: EmbeddingProvider | None,
+        result: SyncResult,
+        now: str,
+    ) -> None:
+        for project_path in projects:
+            knowledge_dir = Path(project_path) / ".lore" / "knowledge"
+            if not knowledge_dir.is_dir():
+                continue
+
+            repo_url, repo_branch = get_project_remote(project_path)
+            repo_id = repo_url or f"local:{project_path}"
+            branch_id = repo_branch or "local"
+
+            try:
+                commit_sha = GitRepoManager.get_head_sha(Path(project_path))
+            except Exception:
+                commit_sha = "unknown"
+
+            repo_hash = hashlib.sha256(f"project:{project_path}".encode()).hexdigest()[
+                :16
+            ]
+
+            result.repos_synced.append(f"project:{Path(project_path).name}")
+
+            self._sync_one_repo(
+                scan_dir=knowledge_dir,
+                level=1,
+                level_name="project",
+                repo_id=repo_id,
+                branch_id=branch_id,
+                commit_sha=commit_sha,
+                repo_hash=repo_hash,
+                sync_states=sync_states,
+                emb_provider=emb_provider,
+                result=result,
+                now=now,
+            )
+
+    def _sync_one_repo(
+        self,
+        scan_dir: Path,
+        level: int,
+        level_name: str | None,
+        repo_id: str,
+        branch_id: str,
+        commit_sha: str,
+        repo_hash: str,
+        sync_states: dict[str, RepoSyncState],
+        emb_provider: EmbeddingProvider | None,
+        result: SyncResult,
+        now: str,
+    ) -> None:
+        parsed_files = scan_repo(scan_dir)
+        current_keys: set[str] = set()
+        new_hashes: dict[str, str] = {}
+
+        old_state = sync_states.get(repo_hash)
+        changed: list[ParsedFile] = []
+        for pf in parsed_files:
+            current_keys.add(pf.key)
+            new_hashes[pf.file_path] = pf.content_hash
+            if old_state and old_state.file_hashes.get(pf.file_path) == pf.content_hash:
+                continue
+            changed.append(pf)
+
+        if changed:
+            changed_keys = {pf.key for pf in changed}
+            conflicts_by_key = self._store.find_conflicts_batch(changed_keys, level)
+            embeddings = self._batch_embed(changed, emb_provider)
+
+            for pf in changed:
+                entry = self._build_entry(
+                    pf,
+                    level,
+                    level_name,
+                    repo_id,
+                    branch_id,
+                    commit_sha,
+                    embeddings.get(pf.key),
+                )
+                others = conflicts_by_key.get(pf.key, [])
+                entry_id, action = self._store.sync_upsert(entry, pre_conflicts=others)
+                if action == "blocked":
+                    blocker = next(
+                        (o for o in others if o.locked and o.level < entry.level),
+                        None,
+                    )
+                    result.blocked += 1
+                    if blocker:
+                        result.details.append(
+                            f"[!] {pf.key} blocked by locked"
+                            f" {blocker.level_label} entry"
+                        )
+                    continue
+                if action == "created":
+                    result.created += 1
+                    result.details.append(f"[+] {pf.key} ({pf.file_path})")
+                else:
+                    result.updated += 1
+                    result.details.append(f"[~] {pf.key} ({pf.file_path})")
+                self._resolve_conflicts(entry_id, entry, pf, result, others)
+
+        existing = self._store.list_by_repo(repo_id, branch_id)
+        for entry in existing:
+            if entry.key not in current_keys:
+                self._store.clear_conflict(entry.id)
+                self._store.delete_by_source(
+                    entry.key,
+                    repo_id,
+                    branch_id,
+                    "file removed from repo",
+                    "sync",
+                )
+                result.deleted += 1
+                result.details.append(f"[-] {entry.key}")
+
+        self._store.commit()
+
+        sync_states[repo_hash] = RepoSyncState(
+            repo=repo_id,
+            branch=branch_id,
+            last_commit=commit_sha,
+            last_sync=now,
+            file_hashes=new_hashes,
+        )
 
     def _collect_hierarchy(
         self, projects: list[str]
