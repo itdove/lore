@@ -49,10 +49,10 @@ cd /path/to/lore
 ```
 
 This creates:
-- `~/development/ai/lore-demo-project-knowledge/` — git repo with 3 project-specific entries (level 1)
-- `~/development/ai/lore-demo-team-knowledge/` — git repo with 4 team-wide entries (level 2)
 - `~/development/ai/lore-demo/` — demo project with lore initialized
-- `.lore/config.json` — project config with 2-level hierarchy (project + team)
+- `~/development/ai/lore-demo/.lore/knowledge/` — project-level knowledge (level 1, implicit, in project repo)
+- `~/development/ai/lore-demo-team-knowledge/` — git repo with 4 team-wide entries (level 2)
+- `.lore/config.json` — project config with team hierarchy (level 2)
 - `.mcp.json` — MCP server registration
 - `.claude/settings.json` — Claude Code hooks (recall, nudge, capture)
 - `~/.config/lore/config.json` — global config (ollama embedding, LLM, capture settings)
@@ -81,13 +81,15 @@ Settings are split between global and project config:
 
 The demo uses 3 levels:
 
-| Level | Name | Description | Repo |
-|-------|------|-------------|------|
-| 0 | individual | Local entries, no review needed | (SQLite only) |
-| 1 | project | Discoveries about this specific project | `lore-demo-project-knowledge` |
-| 2 | team | General coding and development rules | `lore-demo-team-knowledge` |
+| Level | Name | Description | Storage |
+|-------|------|-------------|---------|
+| 0 | individual | Local entries, no review needed | SQLite only |
+| 1 | project | Discoveries about this specific project | SQLite + `.lore/knowledge/` in project repo (implicit) |
+| 2 | team | General coding and development rules | `lore-demo-team-knowledge` repo |
 
-Each level can have:
+Levels 0 and 1 are **implicit** — no config entry needed. Level 1 uses `.lore/knowledge/` in the project repo itself. User-defined levels (2+) each point to a separate git repo.
+
+Each user-defined level can have:
 - `writable: true` (default) — agents can store via MCP, creates PRs
 - `writable: false` — read-only, maintained by humans via git only
 - `description` — helps LLM capture hook decide where to store knowledge
@@ -104,10 +106,8 @@ Git sync derives keys from file path: `bug/api/jwt.md` → `bug:api:jwt`
 
 ### Write Isolation
 
-For shared levels (level > 0 — both project and team):
-- `store_knowledge` creates a PR only — no DB write
-- DB entries for shared levels are populated exclusively by `lore sync` after PR merge
-- This ensures the git repo is the single source of truth
+- **Level 1 (project):** `store_knowledge(level="project")` writes to SQLite immediately (user sees it right away) AND creates a PR to `.lore/knowledge/` in the project repo. Teammates get the entry after the PR is merged and `lore sync` runs.
+- **Levels 2+ (shared repos):** `store_knowledge` creates a PR only — no DB write. DB entries for shared levels are populated exclusively by `lore sync` after PR merge. Git repo is the single source of truth.
 
 ### Optional: Ollama Setup (for semantic search + LLM synthesis + session-end capture)
 
@@ -276,27 +276,28 @@ lore search "docker layer cache"
 
 Expected: entry appears with `(individual)` level label.
 
-### Scene 5: Promote Knowledge to Project Level (PR Creation)
+### Scene 5: Promote Knowledge to Project Level (SQLite + PR)
 
-Show the PR-based review flow for shared knowledge. When storing at a shared level, lore creates a PR — **no DB write**. The entry only appears in the DB after the PR is merged and `lore sync` runs.
+Show the hybrid store flow for project-level knowledge. When storing at level "project", lore writes to SQLite immediately AND creates a PR to `.lore/knowledge/` in the project repo.
 
 **Prompt Claude Code:**
 
 > "Store in lore at project level: key 'bug:deploy:docker-layer-cache', value 'Docker layer cache invalidation causes 15-minute builds when requirements.txt changes. Fix: use --mount=type=cache for pip install layer.', tags 'bug,docker,ci'"
 
 Claude Code calls `store_knowledge(..., level="project")` which:
-1. Creates a branch `lore/bug-deploy-docker-layer-cache-<timestamp>`
-2. Writes the markdown file with frontmatter at `bug/deploy/docker-layer-cache.md`
-3. Pushes and creates a PR via `gh pr create`
-4. Returns `{"key": "...", "level": 1, "pr_url": "https://github.com/..."}`
+1. Writes to local SQLite immediately (user sees it right away)
+2. Creates a branch `lore/bug-deploy-docker-layer-cache-<timestamp>`
+3. Writes the markdown file at `.lore/knowledge/bug/deploy/docker-layer-cache.md`
+4. Pushes and creates a PR via `gh pr create`
+5. Returns `{"id": "...", "key": "...", "level": 1, "pr_url": "https://github.com/..."}`
 
-**Important:** The DB is NOT updated. The entry appears only after the PR is merged and `lore sync` runs. Git repo is the source of truth for shared levels.
+**Key difference from team level:** The entry is in the user's local DB immediately. Teammates get it after the PR merges and they run `lore sync`.
 
-> **Variation:** To store at team level (level 2), use `level="team"` instead. This targets the team knowledge repo — useful when the knowledge applies across all projects.
+> **Variation:** To store at team level (level 2), use `level="team"` instead. This targets the team knowledge repo with PR-only behavior (no local DB write) — useful when the knowledge applies across all projects.
 
 The team reviews the PR in normal git workflow. Once merged, next `lore sync` picks it up for everyone.
 
-> **Note:** After the PR is created, show it in the GitHub UI — the file appears at `bug/deploy/docker-layer-cache.md` with proper frontmatter.
+> **Note:** After the PR is created, show it in the GitHub UI — the file appears at `.lore/knowledge/bug/deploy/docker-layer-cache.md` with proper frontmatter.
 
 ### Scene 6: Negate Stale Knowledge
 
@@ -478,7 +479,7 @@ Capture config:
 6. **Writable flag** — control which levels agents can write to, read-only for compliance
 7. **Locked entries** — architectural decisions that can't be overridden locally
 8. **Sync is incremental** — content-hash based, only processes changed files
-9. **Write isolation** — shared-level writes create PRs only, no DB write. Git repo is source of truth
+9. **Write isolation** — level 1 (project) writes SQLite + PR; levels 2+ create PRs only. Git repo is source of truth for shared levels
 10. **Auto-recall** — knowledge injected into agent context before every prompt
 11. **Session-end capture** — LLM extracts, dedup enriches, rate limits, proposes for review
 12. **PR-based review** — shared knowledge changes auto-create PRs for team review
@@ -499,12 +500,10 @@ Run this to reset everything for the next demo:
 # 1. Remove demo project (includes .mcp.json, .claude/settings.json, .lore/)
 rm -rf ~/development/ai/lore-demo
 
-# 2. Remove knowledge repo local clones
-rm -rf ~/development/ai/lore-demo-project-knowledge
+# 2. Remove team knowledge repo local clone
 rm -rf ~/development/ai/lore-demo-team-knowledge
 
-# 3. Delete GitHub repos (and any PR branches created during demo)
-gh repo delete itdove/lore-demo-project-knowledge --yes
+# 3. Delete GitHub repo (and any PR branches created during demo)
 gh repo delete itdove/lore-demo-team-knowledge --yes
 
 # 4. Remove lore global config, database, cache, and state
@@ -534,9 +533,7 @@ if p.exists():
 ```bash
 # Should all return "not found" or empty
 ls ~/development/ai/lore-demo 2>/dev/null || echo "demo project: cleaned"
-ls ~/development/ai/lore-demo-project-knowledge 2>/dev/null || echo "project knowledge repo: cleaned"
 ls ~/development/ai/lore-demo-team-knowledge 2>/dev/null || echo "team knowledge repo: cleaned"
-gh repo view itdove/lore-demo-project-knowledge 2>/dev/null || echo "project github repo: cleaned"
 gh repo view itdove/lore-demo-team-knowledge 2>/dev/null || echo "team github repo: cleaned"
 ls ~/.config/lore 2>/dev/null || echo "global config: cleaned"
 ls ~/.local/share/lore 2>/dev/null || echo "database: cleaned"

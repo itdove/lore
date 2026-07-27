@@ -7,6 +7,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from lore.config.manager import get_global_config, get_project_config
+from lore.config.utils import get_project_remote
 from lore.embedding import EmbeddingProvider
 from lore.embedding import get_embedding_provider as _create_embedding_provider
 from lore.embedding.base import embed_to_blob
@@ -82,11 +83,12 @@ def _create_shared_pr(
     body: str,
     repo_url: str,
     repo_branch: str | None,
+    file_path_override: str | None = None,
 ) -> str | None:
     try:
         cfg = get_global_config()
         git_iface = get_git_interface(cfg.git.provider)
-        file_path = key_to_path(key)
+        file_path = file_path_override or key_to_path(key)
         return git_iface.create_pr(
             repo_url=repo_url,
             file_path=file_path,
@@ -106,11 +108,14 @@ def _resolve_level(
 ) -> tuple[int, str, str | None, str | None, bool]:
     if level_name == "individual":
         return 0, "individual", None, None, True
+    if level_name == "project":
+        repo_url, repo_branch = get_project_remote()
+        return 1, "project", repo_url, repo_branch, True
     cfg = get_project_config()
     for h in cfg.hierarchy:
         if h.name == level_name:
             return h.level, level_name, h.repo, h.branch, h.writable
-    available = ["individual"] + [h.name for h in cfg.hierarchy if h.name]
+    available = ["individual", "project"] + [h.name for h in cfg.hierarchy if h.name]
     raise ValueError(f"Unknown level '{level_name}'. Available: {available}")
 
 
@@ -279,12 +284,13 @@ def create_server() -> FastMCP:
             key: Knowledge key in colon-separated format (e.g., 'bug:api:jwt').
             value: The knowledge content to store.
             tags: Comma-separated tags for categorization.
-            level: Target level — 'individual' for local-only, or a
-                configured hierarchy level name for shared storage.
+            level: Target level — 'individual' for local-only, 'project'
+                for project-scoped (SQLite + PR to .lore/knowledge/),
+                or a configured hierarchy level name for shared storage.
 
         Returns:
             Entry id, key, level, and pr_url (null for individual,
-            PR URL for shared levels via GitInterface).
+            PR URL for project and shared levels via GitInterface).
         """
         _validate_key(key)
         level_int, level_name, repo_url, repo_branch, writable = _resolve_level(level)
@@ -325,9 +331,12 @@ def create_server() -> FastMCP:
             except Exception:
                 logger.warning("Embedding failed for key %r", key, exc_info=True)
 
-        if level_int > 0 and repo_url:
-            tags_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
-            fm = {"tags": tags_list, "created_by": "lore-agent"}
+        tags_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
+        fm = {"tags": tags_list, "created_by": "lore-agent"}
+
+        pr_url = None
+        if level_int >= 1 and repo_url:
+            override = f".lore/knowledge/{key_to_path(key)}" if level_int == 1 else None
             pr_url = _create_shared_pr(
                 key=key,
                 content=value,
@@ -337,12 +346,14 @@ def create_server() -> FastMCP:
                 f" at level '{level_name}'",
                 repo_url=repo_url,
                 repo_branch=repo_branch,
+                file_path_override=override,
             )
-            return {
-                "key": key,
-                "level": level_int,
-                "pr_url": pr_url,
-            }
+            if level_int > 1:
+                return {
+                    "key": key,
+                    "level": level_int,
+                    "pr_url": pr_url,
+                }
 
         existing = store.get_by_key_and_level(key, level_int)
         if existing:
@@ -366,7 +377,7 @@ def create_server() -> FastMCP:
             )
             entry_id = store.store(entry)
 
-        return {"id": entry_id, "key": key, "level": level_int, "pr_url": None}
+        return {"id": entry_id, "key": key, "level": level_int, "pr_url": pr_url}
 
     @server.tool()
     def negate_knowledge(
@@ -381,12 +392,12 @@ def create_server() -> FastMCP:
         Args:
             key: The knowledge key to negate.
             reason: Why this knowledge is being negated.
-            level: Target level — 'individual' or a configured hierarchy
-                level name.
+            level: Target level — 'individual', 'project', or a configured
+                hierarchy level name.
 
         Returns:
             The negated key and pr_url (null for individual,
-            PR URL for shared levels).
+            PR URL for project and shared levels).
         """
         _validate_key(key)
         level_int, level_name, repo_url, repo_branch, writable = _resolve_level(level)
@@ -396,11 +407,12 @@ def create_server() -> FastMCP:
         if existing is None:
             return {"error": f"Key not found: '{key}' at level '{level}'"}
 
-        if level_int > 0 and repo_url:
-            negation_content = (
-                f"[NEGATED] {reason}\n\n" f"Previous value: {existing.value}"
-            )
-            fm = {"created_by": "lore-agent", "negated": True}
+        negation_content = f"[NEGATED] {reason}\n\n" f"Previous value: {existing.value}"
+        fm = {"created_by": "lore-agent", "negated": True}
+
+        pr_url = None
+        if level_int >= 1 and repo_url:
+            override = f".lore/knowledge/{key_to_path(key)}" if level_int == 1 else None
             pr_url = _create_shared_pr(
                 key=key,
                 content=negation_content,
@@ -409,15 +421,17 @@ def create_server() -> FastMCP:
                 body=f"Auto-generated by lore negate_knowledge: {reason}",
                 repo_url=repo_url,
                 repo_branch=repo_branch,
+                file_path_override=override,
             )
-            return {"key": key, "negated": True, "pr_url": pr_url}
+            if level_int > 1:
+                return {"key": key, "negated": True, "pr_url": pr_url}
 
         try:
             store.negate(key, reason, level=level_int)
         except ValueError as exc:
             return {"error": str(exc)}
 
-        return {"key": key, "negated": True, "pr_url": None}
+        return {"key": key, "negated": True, "pr_url": pr_url}
 
     @server.tool()
     def delete_knowledge(
@@ -426,13 +440,13 @@ def create_server() -> FastMCP:
     ) -> dict:
         """Delete a knowledge entry from the local store.
 
-        Individual entries are deleted immediately. Shared entries must be
-        deleted via a PR to the knowledge repo.
+        Individual and project entries are deleted locally. Shared entries
+        (level 2+) must be deleted via a PR to the knowledge repo.
 
         Args:
             key: The knowledge key to delete.
-            level: Target level — 'individual' or a configured hierarchy
-                level name.
+            level: Target level — 'individual', 'project', or a configured
+                hierarchy level name.
 
         Returns:
             Confirmation of deletion, or error for shared entries.
@@ -443,11 +457,11 @@ def create_server() -> FastMCP:
         existing = store.get_by_key_and_level(key, level_int)
         if existing is None:
             other = store.get(key)
-            if other is not None and other.level > 0:
+            if other is not None and other.level > 1:
                 return {"error": _SHARED_DELETE_ERR}
             return {"error": f"Key not found: '{key}' at level '{level}'"}
 
-        if existing.level > 0:
+        if existing.level > 1:
             return {"error": _SHARED_DELETE_ERR}
 
         store.delete(key, reason="deleted via MCP", actor="mcp", level=level_int)

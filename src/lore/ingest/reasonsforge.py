@@ -63,6 +63,8 @@ class ReasonsForgeIngester(LoreIngester):
         tables = []
         cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         for (name,) in cursor:
+            if "]" in name or not name.isidentifier():
+                continue
             cols = {r[1] for r in conn.execute(f"PRAGMA table_info([{name}])")}
             key_col = next((c for c in _KEY_COLUMNS if c in cols), None)
             val_col = next((c for c in _VALUE_COLUMNS if c in cols), None)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import warnings
 from pathlib import Path
@@ -22,6 +23,8 @@ from lore.config.models import (
     StoreConfig,
     SyncConfig,
 )
+
+logger = logging.getLogger(__name__)
 
 GLOBAL_ONLY_SUBKEYS: frozenset[str] = frozenset(
     {
@@ -115,6 +118,14 @@ def get_project_config(project_dir: str | Path | None = None) -> ProjectConfig:
     for entry in hierarchy_raw:
         if "level" not in entry or "repo" not in entry:
             continue
+        if entry["level"] < 2:
+            logger.warning(
+                "Skipping hierarchy entry with level %d (repo=%s): "
+                "levels 0-1 reserved for implicit individual/project",
+                entry["level"],
+                entry.get("repo", "unknown"),
+            )
+            continue
         hierarchy.append(
             HierarchyLevel(
                 level=entry["level"],
@@ -140,6 +151,10 @@ def get_project_config(project_dir: str | Path | None = None) -> ProjectConfig:
         individual_description=lore.get(
             "individual_description",
             "Personal notes, local discoveries, work-in-progress findings.",
+        ),
+        project_description=lore.get(
+            "project_description",
+            "Project-specific knowledge useful to any teammate on this project.",
         ),
         key_structure=key_structure,
     )

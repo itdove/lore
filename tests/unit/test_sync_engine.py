@@ -81,7 +81,7 @@ def test_sync_insert_new_entries(sync_env):
             )
         },
     )
-    hierarchy = [{"level": 1, "repo": repo, "branch": branch, "name": "team"}]
+    hierarchy = [{"level": 2, "repo": repo, "branch": branch, "name": "team"}]
 
     with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
         result = sync_env["engine"].sync_all(["/fake/project"])
@@ -92,7 +92,7 @@ def test_sync_insert_new_entries(sync_env):
     assert entry is not None
     assert entry.value == "Use snake_case.\n"
     assert entry.tags == "python"
-    assert entry.level == 1
+    assert entry.level == 2
     assert entry.level_name == "team"
     assert entry.ingested_from == "git"
     assert entry.repo_url == repo
@@ -108,7 +108,7 @@ def test_sync_update_changed_entry(sync_env):
         branch,
         {"topic/a.md": "---\ntags: [x]\n---\nOriginal.\n"},
     )
-    hierarchy = [{"level": 1, "repo": repo, "branch": branch}]
+    hierarchy = [{"level": 2, "repo": repo, "branch": branch}]
 
     with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
         sync_env["engine"].sync_all(["/fake"])
@@ -137,7 +137,7 @@ def test_sync_skip_unchanged(sync_env):
     branch = "main"
     content = "---\ntags: [x]\n---\nStable.\n"
     _setup_repo(sync_env["cache"], repo, branch, {"topic/a.md": content})
-    hierarchy = [{"level": 1, "repo": repo, "branch": branch}]
+    hierarchy = [{"level": 2, "repo": repo, "branch": branch}]
 
     with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
         r1 = sync_env["engine"].sync_all(["/fake"])
@@ -162,7 +162,7 @@ def test_sync_delete_removed_file(sync_env):
             "topic/b.md": "B.\n",
         },
     )
-    hierarchy = [{"level": 1, "repo": repo, "branch": branch}]
+    hierarchy = [{"level": 2, "repo": repo, "branch": branch}]
 
     with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
         sync_env["engine"].sync_all(["/fake"])
@@ -204,7 +204,7 @@ def test_sync_provenance_set(sync_env):
         branch,
         {"topic/entry.md": "---\ntags: [x]\n---\nBody.\n"},
     )
-    hierarchy = [{"level": 1, "repo": repo, "branch": branch}]
+    hierarchy = [{"level": 2, "repo": repo, "branch": branch}]
 
     with (
         _mock_project_config(hierarchy),
@@ -229,7 +229,7 @@ def test_sync_key_from_path(sync_env):
         branch,
         {"convention/naming/snake-case.md": "Body.\n"},
     )
-    hierarchy = [{"level": 1, "repo": repo, "branch": branch}]
+    hierarchy = [{"level": 2, "repo": repo, "branch": branch}]
 
     with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
         sync_env["engine"].sync_all(["/fake"])
@@ -243,7 +243,7 @@ def test_sync_promotion_cleanup(sync_env):
     repo = "github.com/org/k"
     branch = "main"
     _setup_repo(sync_env["cache"], repo, branch, {"topic/a.md": "Shared version.\n"})
-    hierarchy = [{"level": 1, "repo": repo, "branch": branch}]
+    hierarchy = [{"level": 2, "repo": repo, "branch": branch}]
 
     with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
         result = sync_env["engine"].sync_all(["/fake"])
@@ -251,7 +251,7 @@ def test_sync_promotion_cleanup(sync_env):
     assert result.promoted == 1
     entries = sync_env["store"].list_entries()
     assert len(entries) == 1
-    assert entries[0].level == 1
+    assert entries[0].level == 2
 
 
 def test_sync_promotion_preserves_unmatched(sync_env):
@@ -262,7 +262,7 @@ def test_sync_promotion_preserves_unmatched(sync_env):
     repo = "github.com/org/k"
     branch = "main"
     _setup_repo(sync_env["cache"], repo, branch, {"topic/shared.md": "Shared.\n"})
-    hierarchy = [{"level": 1, "repo": repo, "branch": branch}]
+    hierarchy = [{"level": 2, "repo": repo, "branch": branch}]
 
     with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
         sync_env["engine"].sync_all(["/fake"])
@@ -280,7 +280,7 @@ def test_sync_locked_entry_preserved(sync_env):
         branch,
         {"topic/locked.md": "---\nlock: true\n---\nLocked content.\n"},
     )
-    hierarchy = [{"level": 1, "repo": repo, "branch": branch}]
+    hierarchy = [{"level": 2, "repo": repo, "branch": branch}]
 
     with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
         sync_env["engine"].sync_all(["/fake"])
@@ -298,7 +298,7 @@ def test_sync_tags_stored(sync_env):
         branch,
         {"topic/tagged.md": "---\ntags: [security, api, compliance]\n---\nBody.\n"},
     )
-    hierarchy = [{"level": 1, "repo": repo, "branch": branch}]
+    hierarchy = [{"level": 2, "repo": repo, "branch": branch}]
 
     with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
         sync_env["engine"].sync_all(["/fake"])
@@ -313,8 +313,8 @@ def test_sync_multiple_repos(sync_env):
     _setup_repo(sync_env["cache"], repo1, "main", {"topic/a.md": "Team rule.\n"})
     _setup_repo(sync_env["cache"], repo2, "main", {"topic/b.md": "Company rule.\n"})
     hierarchy = [
-        {"level": 1, "repo": repo1, "branch": "main", "name": "team"},
-        {"level": 2, "repo": repo2, "branch": "main", "name": "company"},
+        {"level": 2, "repo": repo1, "branch": "main", "name": "team"},
+        {"level": 3, "repo": repo2, "branch": "main", "name": "company"},
     ]
 
     with (
@@ -326,8 +326,8 @@ def test_sync_multiple_repos(sync_env):
     assert result.created == 2
     a = sync_env["store"].get("topic:a")
     b = sync_env["store"].get("topic:b")
-    assert a.level == 1
-    assert b.level == 2
+    assert a.level == 2
+    assert b.level == 3
 
 
 def test_sync_idempotent(sync_env):
@@ -335,7 +335,7 @@ def test_sync_idempotent(sync_env):
     branch = "main"
     content = "---\ntags: [x]\n---\nStable.\n"
     _setup_repo(sync_env["cache"], repo, branch, {"topic/a.md": content})
-    hierarchy = [{"level": 1, "repo": repo, "branch": branch}]
+    hierarchy = [{"level": 2, "repo": repo, "branch": branch}]
 
     with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
         r1 = sync_env["engine"].sync_all(["/fake"])
@@ -356,7 +356,7 @@ def test_sync_log_written(sync_env):
     repo = "github.com/org/k"
     branch = "main"
     _setup_repo(sync_env["cache"], repo, branch, {"topic/a.md": "Content.\n"})
-    hierarchy = [{"level": 1, "repo": repo, "branch": branch}]
+    hierarchy = [{"level": 2, "repo": repo, "branch": branch}]
 
     with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
         sync_env["engine"].sync_all(["/fake"])
@@ -375,7 +375,7 @@ def test_sync_error_continues(sync_env):
     repo2 = "github.com/org/good"
     _setup_repo(sync_env["cache"], repo2, "main", {"topic/a.md": "Good.\n"})
     hierarchy = [
-        {"level": 1, "repo": repo1, "branch": "main"},
+        {"level": 2, "repo": repo1, "branch": "main"},
         {"level": 2, "repo": repo2, "branch": "main"},
     ]
 
@@ -410,7 +410,7 @@ def test_sync_result_counts(sync_env):
             "topic/b.md": "B.\n",
         },
     )
-    hierarchy = [{"level": 1, "repo": repo, "branch": branch}]
+    hierarchy = [{"level": 2, "repo": repo, "branch": branch}]
 
     with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
         r1 = sync_env["engine"].sync_all(["/fake"])
@@ -453,7 +453,7 @@ def test_sync_conflict_detected(sync_env):
         sync_env["cache"], team_repo, "main", {"naming/snake.md": "use camelCase\n"}
     )
     hierarchy = [
-        {"level": 1, "repo": org_repo, "branch": "main", "name": "org"},
+        {"level": 2, "repo": org_repo, "branch": "main", "name": "org"},
         {"level": 3, "repo": team_repo, "branch": "main", "name": "team"},
     ]
 
@@ -463,7 +463,7 @@ def test_sync_conflict_detected(sync_env):
     assert result.conflicts >= 1
     assert result.created == 2
 
-    org_entry = sync_env["store"].get_by_key_and_level("naming:snake", 1)
+    org_entry = sync_env["store"].get_by_key_and_level("naming:snake", 2)
     team_entry = sync_env["store"].get_by_key_and_level("naming:snake", 3)
     assert org_entry is not None
     assert team_entry is not None
@@ -490,7 +490,7 @@ def test_sync_locked_blocks_lower(sync_env):
         {"naming/snake.md": "use camelCase\n"},
     )
     hierarchy = [
-        {"level": 1, "repo": org_repo, "branch": "main", "name": "org"},
+        {"level": 2, "repo": org_repo, "branch": "main", "name": "org"},
         {"level": 3, "repo": team_repo, "branch": "main", "name": "team"},
     ]
 
@@ -500,7 +500,7 @@ def test_sync_locked_blocks_lower(sync_env):
     assert result.blocked == 1
     assert result.created == 1
 
-    org_entry = sync_env["store"].get_by_key_and_level("naming:snake", 1)
+    org_entry = sync_env["store"].get_by_key_and_level("naming:snake", 2)
     team_entry = sync_env["store"].get_by_key_and_level("naming:snake", 3)
     assert org_entry is not None
     assert team_entry is None
@@ -517,14 +517,14 @@ def test_sync_conflict_cleared_on_delete(sync_env):
         sync_env["cache"], team_repo, "main", {"naming/snake.md": "use camelCase\n"}
     )
     hierarchy = [
-        {"level": 1, "repo": org_repo, "branch": "main", "name": "org"},
+        {"level": 2, "repo": org_repo, "branch": "main", "name": "org"},
         {"level": 3, "repo": team_repo, "branch": "main", "name": "team"},
     ]
 
     with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
         sync_env["engine"].sync_all(["/fake"])
 
-    org_entry = sync_env["store"].get_by_key_and_level("naming:snake", 1)
+    org_entry = sync_env["store"].get_by_key_and_level("naming:snake", 2)
     assert org_entry.conflict_with is not None
 
     repo_path = sync_env["git_mgr"].repo_path(org_repo, "main")
@@ -543,20 +543,20 @@ def test_sync_conflict_cleared_on_delete(sync_env):
 
 
 def test_sync_conflict_higher_level_wins(sync_env):
-    """Team (level=3) wins over org (level=1) for non-locked entries."""
+    """Team (level=3) wins over org (level=2) for non-locked entries."""
     org_repo = "github.com/org/shared"
     team_repo = "github.com/team/shared"
     _setup_repo(sync_env["cache"], org_repo, "main", {"api/rate.md": "100 req/min\n"})
     _setup_repo(sync_env["cache"], team_repo, "main", {"api/rate.md": "500 req/min\n"})
     hierarchy = [
-        {"level": 1, "repo": org_repo, "branch": "main", "name": "org"},
+        {"level": 2, "repo": org_repo, "branch": "main", "name": "org"},
         {"level": 3, "repo": team_repo, "branch": "main", "name": "team"},
     ]
 
     with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
         sync_env["engine"].sync_all(["/fake"])
 
-    org_entry = sync_env["store"].get_by_key_and_level("api:rate", 1)
+    org_entry = sync_env["store"].get_by_key_and_level("api:rate", 2)
     team_entry = sync_env["store"].get_by_key_and_level("api:rate", 3)
     assert team_entry.conflict_status == "active"
     assert org_entry.conflict_status == "overridden"
@@ -582,7 +582,7 @@ def test_sync_force_reprocesses_unchanged(sync_env):
     branch = "main"
     content = "---\ntags: [x]\n---\nStable.\n"
     _setup_repo(sync_env["cache"], repo, branch, {"topic/a.md": content})
-    hierarchy = [{"level": 1, "repo": repo, "branch": branch}]
+    hierarchy = [{"level": 2, "repo": repo, "branch": branch}]
 
     with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
         r1 = sync_env["engine"].sync_all(["/fake"])
@@ -602,7 +602,7 @@ def test_sync_force_regenerates_embeddings(sync_env):
     branch = "main"
     content = "---\ntags: [x]\n---\nStable.\n"
     _setup_repo(sync_env["cache"], repo, branch, {"topic/a.md": content})
-    hierarchy = [{"level": 1, "repo": repo, "branch": branch}]
+    hierarchy = [{"level": 2, "repo": repo, "branch": branch}]
 
     with _mock_project_config(hierarchy), _mock_clone_or_pull(sync_env["git_mgr"]):
         sync_env["engine"].sync_all(["/fake"])
@@ -629,3 +629,47 @@ def test_sync_force_regenerates_embeddings(sync_env):
 
     assert r.updated == 1
     mock_provider.embed_batch.assert_called_once()
+
+
+# --- Project-level (level 1) sync tests ---
+
+
+def test_sync_project_level_scans_lore_knowledge(sync_env):
+    project_dir = sync_env["cache"] / "myproject"
+    knowledge_dir = project_dir / ".lore" / "knowledge"
+    knowledge_dir.mkdir(parents=True)
+
+    (knowledge_dir / "guide").mkdir()
+    (knowledge_dir / "guide" / "setup.md").write_text(
+        "---\ntags: [onboarding]\n---\nRun make install\n"
+    )
+
+    with (
+        mock.patch("lore.sync.engine.get_project_remote", return_value=(None, None)),
+        mock.patch(
+            "subprocess.run",
+            return_value=mock.Mock(stdout="abc123\n", returncode=0),
+        ),
+        _mock_project_config([]),
+    ):
+        result = sync_env["engine"].sync_all([str(project_dir)])
+
+    assert result.created == 1
+    assert "project:" in result.repos_synced[0]
+
+    entries = sync_env["store"].list_entries(level=1)
+    assert len(entries) == 1
+    assert entries[0].key == "guide:setup"
+    assert entries[0].level == 1
+    assert entries[0].level_name == "project"
+
+
+def test_sync_project_level_skips_missing_knowledge_dir(sync_env):
+    project_dir = sync_env["cache"] / "noproj"
+    project_dir.mkdir()
+
+    with _mock_project_config([]):
+        result = sync_env["engine"].sync_all([str(project_dir)])
+
+    assert result.created == 0
+    assert len(result.repos_synced) == 0

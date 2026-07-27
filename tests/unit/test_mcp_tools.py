@@ -517,7 +517,7 @@ def test_store_knowledge_shared_level_creates_pr_only(tools, store, monkeypatch)
         "get_project_config",
         lambda: ProjectConfig(
             hierarchy=[
-                HierarchyLevel(level=1, repo="org/repo", branch="main", name="team")
+                HierarchyLevel(level=2, repo="org/repo", branch="main", name="team")
             ]
         ),
     )
@@ -529,7 +529,7 @@ def test_store_knowledge_shared_level_creates_pr_only(tools, store, monkeypatch)
         tags="onboarding",
         level="team",
     )
-    assert result["level"] == 1
+    assert result["level"] == 2
     assert result["pr_url"] == "https://github.com/org/repo/pull/99"
 
     entry = store.get("guide:onboard:setup")
@@ -729,7 +729,7 @@ def test_delete_knowledge_individual(tools, store):
 
 
 def test_delete_knowledge_rejects_shared(tools, store):
-    store.store(_make_entry(key="shared:team:convention", value="use tabs", level=1))
+    store.store(_make_entry(key="shared:team:convention", value="use tabs", level=2))
 
     result = tools["delete_knowledge"](key="shared:team:convention")
     assert "error" in result
@@ -923,3 +923,88 @@ def test_query_knowledge_fts_fallback(store, monkeypatch):
     store.store(_make_entry(key="bug:auth:jwt", value="JWT token expiry"))
     result = tool_map["query_knowledge"](topic="JWT")
     assert len(result["results"]) == 1
+
+
+# =====================================================================
+# Project level (implicit level 1)
+# =====================================================================
+
+
+def test_resolve_level_project(monkeypatch):
+    import lore.mcp.server as srv
+
+    monkeypatch.setattr(
+        "lore.mcp.server.get_project_remote",
+        lambda: ("https://github.com/org/proj", "main"),
+    )
+
+    level_int, name, url, branch, writable = srv._resolve_level("project")
+    assert level_int == 1
+    assert name == "project"
+    assert url == "https://github.com/org/proj"
+    assert branch == "main"
+    assert writable is True
+
+
+def test_resolve_level_project_no_remote(monkeypatch):
+    import lore.mcp.server as srv
+
+    monkeypatch.setattr("lore.mcp.server.get_project_remote", lambda: (None, None))
+
+    level_int, name, url, branch, writable = srv._resolve_level("project")
+    assert level_int == 1
+    assert url is None
+    assert writable is True
+
+
+def test_store_knowledge_project_writes_sqlite_and_pr(tools, store, monkeypatch):
+    from lore.git.base import GitInterface
+
+    class _MockGit(GitInterface):
+        def clone_or_pull(self, repo_url, target_dir, branch="main"):
+            return "abc"
+
+        def create_pr(self, **kwargs):
+            return "https://github.com/org/proj/pull/42"
+
+        def get_pr_status(self, pr_url):
+            return "open"
+
+    monkeypatch.setattr(
+        "lore.mcp.server.get_project_remote",
+        lambda: ("https://github.com/org/proj", "main"),
+    )
+    monkeypatch.setattr("lore.mcp.server.get_git_interface", lambda _: _MockGit())
+
+    result = tools["store_knowledge"](
+        key="cfg:db:pool", value="use 10 connections", level="project"
+    )
+    assert result["level"] == 1
+    assert result["pr_url"] == "https://github.com/org/proj/pull/42"
+    assert result["id"] is not None
+
+    entry = store.get_by_key_and_level("cfg:db:pool", 1)
+    assert entry is not None
+    assert entry.value == "use 10 connections"
+
+
+def test_store_knowledge_project_no_remote_sqlite_only(tools, store, monkeypatch):
+    monkeypatch.setattr("lore.mcp.server.get_project_remote", lambda: (None, None))
+
+    result = tools["store_knowledge"](
+        key="cfg:db:pool", value="use 10 connections", level="project"
+    )
+    assert result["level"] == 1
+    assert result["pr_url"] is None
+    assert result["id"] is not None
+
+    entry = store.get_by_key_and_level("cfg:db:pool", 1)
+    assert entry is not None
+
+
+def test_delete_knowledge_allows_project_level(tools, store, monkeypatch):
+    monkeypatch.setattr("lore.mcp.server.get_project_remote", lambda: (None, None))
+
+    store.store(_make_entry(key="cfg:db:pool", value="v", level=1))
+    result = tools["delete_knowledge"](key="cfg:db:pool", level="project")
+    assert result.get("deleted") is True

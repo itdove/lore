@@ -242,13 +242,24 @@ def test_query_fts_filter_levels(store):
     assert "k2" not in keys
 
 
+def test_query_fts_level1_always_included(store):
+    store.store(_make_entry(key="k0", value="search term", level=0))
+    store.store(_make_entry(key="k1", value="search term", level=1))
+    store.store(_make_entry(key="k2", value="search term", level=2))
+    results = store.query_fts("search", filter_levels=[2])
+    keys = {r.key for r in results}
+    assert "k0" in keys
+    assert "k1" in keys
+    assert "k2" in keys
+
+
 def test_query_fts_filter_repos(store):
     store.store(_make_entry(key="k0", value="search term", level=0))
     store.store(
         _make_entry(
             key="k1",
             value="search term",
-            level=1,
+            level=2,
             repo_url="https://github.com/org/repo1",
             repo_branch="main",
         )
@@ -257,7 +268,7 @@ def test_query_fts_filter_repos(store):
         _make_entry(
             key="k2",
             value="search term",
-            level=1,
+            level=2,
             repo_url="https://github.com/org/repo2",
             repo_branch="dev",
         )
@@ -980,7 +991,7 @@ def test_query_vector_respects_level_filter(store):
         _make_entry(key="test:a:one", value="v1", level=0, embedding=embed_to_blob(emb))
     )
     store.store(
-        _make_entry(key="test:a:two", value="v2", level=1, embedding=embed_to_blob(emb))
+        _make_entry(key="test:a:two", value="v2", level=2, embedding=embed_to_blob(emb))
     )
 
     results = store.query_vector(emb, limit=10, filter_levels=[0])
