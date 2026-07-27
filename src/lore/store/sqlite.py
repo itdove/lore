@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 import sqlite_vec
 
+from lore.config.models import IMPLICIT_LEVELS
 from lore.embedding.base import blob_to_embed, cosine_distance, embed_to_blob
 from lore.store.base import HistoryRecord, KnowledgeEntry, StoreBackend
 
@@ -195,6 +196,7 @@ class SQLiteStore(StoreBackend):
         filter_repos: list[tuple[str, str]] | None,
         include_negated: bool,
         col_prefix: str = "",
+        implicit_levels: frozenset[int] = IMPLICIT_LEVELS,
     ) -> tuple[list[str], list]:
         p = f"{col_prefix}." if col_prefix else ""
         conditions = [
@@ -205,13 +207,16 @@ class SQLiteStore(StoreBackend):
         params: list = []
 
         if filter_levels is not None:
-            levels = sorted(set(filter_levels) | {0, 1})
+            levels = sorted(set(filter_levels) | implicit_levels)
             placeholders = ", ".join("?" for _ in levels)
             conditions.append(f"{p}level IN ({placeholders})")
             params.extend(levels)
 
         if filter_repos is not None:
-            repo_clauses = [f"{p}level = 0", f"{p}level = 1"]
+            repo_clauses = []
+            for lv in sorted(implicit_levels):
+                repo_clauses.append(f"{p}level = ?")
+                params.append(lv)
             for repo_url, repo_branch in filter_repos:
                 repo_clauses.append(f"({p}repo_url = ? AND {p}repo_branch = ?)")
                 params.extend([repo_url, repo_branch])

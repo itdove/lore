@@ -1,9 +1,13 @@
 from lore.config.loaders import _clear_config_cache
 from lore.config.manager import get_global_config, get_project_config
 from lore.config.models import (
+    IMPLICIT_LEVELS,
+    INDIVIDUAL_LEVEL,
+    PROJECT_LEVEL,
     GitConfig,
     GlobalConfig,
     HierarchyLevel,
+    LevelPolicy,
     LLMConfig,
     ProjectConfig,
     SearchConfig,
@@ -24,10 +28,14 @@ from lore.config.utils import (
 )
 
 __all__ = [
+    "IMPLICIT_LEVELS",
+    "INDIVIDUAL_LEVEL",
+    "PROJECT_LEVEL",
     "GitConfig",
     "GlobalConfig",
     "HierarchyLevel",
     "LLMConfig",
+    "LevelPolicy",
     "ProjectConfig",
     "SearchConfig",
     "StoreConfig",

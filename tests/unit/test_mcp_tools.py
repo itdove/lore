@@ -930,6 +930,21 @@ def test_query_knowledge_fts_fallback(store, monkeypatch):
 # =====================================================================
 
 
+def test_resolve_level_individual():
+    import lore.mcp.server as srv
+
+    policy = srv._resolve_level("individual")
+    assert policy.level == 0
+    assert policy.name == "individual"
+    assert policy.repo_url is None
+    assert policy.repo_branch is None
+    assert policy.writable is True
+    assert policy.stores_locally is True
+    assert policy.creates_pr is False
+    assert policy.locally_deletable is True
+    assert policy.pr_path_prefix is None
+
+
 def test_resolve_level_project(monkeypatch):
     import lore.mcp.server as srv
 
@@ -938,12 +953,16 @@ def test_resolve_level_project(monkeypatch):
         lambda: ("https://github.com/org/proj", "main"),
     )
 
-    level_int, name, url, branch, writable = srv._resolve_level("project")
-    assert level_int == 1
-    assert name == "project"
-    assert url == "https://github.com/org/proj"
-    assert branch == "main"
-    assert writable is True
+    policy = srv._resolve_level("project")
+    assert policy.level == 1
+    assert policy.name == "project"
+    assert policy.repo_url == "https://github.com/org/proj"
+    assert policy.repo_branch == "main"
+    assert policy.writable is True
+    assert policy.stores_locally is True
+    assert policy.creates_pr is True
+    assert policy.locally_deletable is True
+    assert policy.pr_path_prefix == ".lore/knowledge/"
 
 
 def test_resolve_level_project_no_remote(monkeypatch):
@@ -951,10 +970,34 @@ def test_resolve_level_project_no_remote(monkeypatch):
 
     monkeypatch.setattr("lore.mcp.server.get_project_remote", lambda: (None, None))
 
-    level_int, name, url, branch, writable = srv._resolve_level("project")
-    assert level_int == 1
-    assert url is None
-    assert writable is True
+    policy = srv._resolve_level("project")
+    assert policy.level == 1
+    assert policy.repo_url is None
+    assert policy.writable is True
+    assert policy.creates_pr is True
+
+
+def test_resolve_level_shared(monkeypatch):
+    import lore.mcp.server as srv
+    from lore.config.models import HierarchyLevel, ProjectConfig
+
+    monkeypatch.setattr(
+        "lore.mcp.server.get_project_config",
+        lambda: ProjectConfig(
+            hierarchy=[
+                HierarchyLevel(level=2, repo="https://github.com/org/kb", name="team")
+            ]
+        ),
+    )
+
+    policy = srv._resolve_level("team")
+    assert policy.level == 2
+    assert policy.name == "team"
+    assert policy.repo_url == "https://github.com/org/kb"
+    assert policy.stores_locally is False
+    assert policy.creates_pr is True
+    assert policy.locally_deletable is False
+    assert policy.pr_path_prefix is None
 
 
 def test_store_knowledge_project_writes_sqlite_and_pr(tools, store, monkeypatch):

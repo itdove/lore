@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from lore.config.manager import get_global_config, get_project_config
+from lore.config.models import PROJECT_LEVEL
 from lore.config.utils import get_project_remote
 from lore.embedding import EmbeddingProvider, get_embedding_provider
 from lore.embedding.base import embed_to_blob
@@ -116,7 +117,7 @@ class SyncEngine:
 
             self._sync_one_repo(
                 scan_dir=knowledge_dir,
-                level=1,
+                level=PROJECT_LEVEL,
                 level_name="project",
                 repo_id=repo_id,
                 branch_id=branch_id,

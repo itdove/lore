@@ -2,6 +2,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+INDIVIDUAL_LEVEL = 0
+PROJECT_LEVEL = 1
+IMPLICIT_LEVELS: frozenset[int] = frozenset({INDIVIDUAL_LEVEL, PROJECT_LEVEL})
+
+
+@dataclass
+class LevelPolicy:
+    level: int
+    name: str
+    repo_url: str | None
+    repo_branch: str | None
+    writable: bool
+    stores_locally: bool
+    creates_pr: bool
+    locally_deletable: bool
+    pr_path_prefix: str | None
+
 
 @dataclass
 class HierarchyLevel:
