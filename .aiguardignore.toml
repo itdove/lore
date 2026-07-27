@@ -1,0 +1,5 @@
+[allowlist]
+paths = [
+    "tests/unit/test_git_interface.py",
+    "tests/unit/test_sync_git.py",
+]
