@@ -155,7 +155,7 @@ With Ollama enabled:
 > **macOS (pyenv) note:** To enable native sqlite-vec support, rebuild Python with SQLite extension loading:
 > ```bash
 > brew install sqlite3
-> PYTHON_CONFIGURE_OPTS="--enable-loadable-sqlite-extensions" \
+> PYTHON_CONFIGURE_OPTS="--enable-loadable-sqlite-extensions" \  # ai-guardian:allow
 > LDFLAGS="-L$(brew --prefix sqlite3)/lib" \
 > CPPFLAGS="-I$(brew --prefix sqlite3)/include" \
 > pyenv install 3.12.11 --force

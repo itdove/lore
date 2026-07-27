@@ -1,0 +1,13 @@
+{
+  "prompt_injection": {
+    "allowlist_patterns": [
+      "__init__",
+      "__import__",
+      "__class__",
+      "__globals__",
+      "__builtins__",
+      "__mro__",
+      "__subclasses__"
+    ]
+  }
+}

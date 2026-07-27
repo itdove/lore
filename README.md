@@ -153,7 +153,7 @@ Lore uses [sqlite-vec](https://github.com/asg017/sqlite-vec) for SQL-level cosin
 brew install sqlite
 LDFLAGS="-L$(brew --prefix sqlite)/lib" \
 CPPFLAGS="-I$(brew --prefix sqlite)/include" \
-PYTHON_CONFIGURE_OPTS="--enable-loadable-sqlite-extensions" \
+PYTHON_CONFIGURE_OPTS="--enable-loadable-sqlite-extensions" \  # ai-guardian:allow
 pyenv install 3.12 --force
 ```
 
