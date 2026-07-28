@@ -11,6 +11,25 @@ from lore.config.models import IMPLICIT_LEVELS
 _RECALL_PREAMBLE = "IMPORTANT: The following team knowledge is relevant to this prompt."
 
 
+def _setup_file_logging() -> None:
+    import logging
+
+    from lore.config.utils import state_dir
+
+    root = logging.getLogger("lore")
+    if any(isinstance(h, logging.FileHandler) for h in root.handlers):
+        return
+    log_dir = state_dir()
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "lore.log"
+    handler = logging.FileHandler(log_path, encoding="utf-8")
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    root.addHandler(handler)
+    root.setLevel(logging.DEBUG)
+
+
 def _ensure_dirs() -> None:
     from lore.config.utils import cache_dir, config_dir, data_dir, state_dir
 
@@ -54,6 +73,9 @@ def _build_level_entry(
     name: str | None = None,
     description: str | None = None,
     writable: bool = True,
+    ingester: str | None = None,
+    doc_paths: list[str] | None = None,
+    exclude_paths: list[str] | None = None,
 ) -> dict:
     entry: dict = {"level": level, "repo": repo, "branch": branch}
     if name:
@@ -62,6 +84,12 @@ def _build_level_entry(
         entry["description"] = description
     if not writable:
         entry["writable"] = False
+    if ingester:
+        entry["ingester"] = ingester
+    if doc_paths is not None:
+        entry["doc_paths"] = doc_paths
+    if exclude_paths is not None:
+        entry["exclude_paths"] = exclude_paths
     return entry
 
 
@@ -420,7 +448,7 @@ def _cmd_search(args: argparse.Namespace) -> int:
     raw = store.query_hybrid(
         args.topic,
         query_embedding=query_embedding,
-        limit=50,
+        limit=args.limit,
         filter_levels=filter_levels,
         filter_repos=filter_repos,
         min_similarity=cfg.search.min_similarity,
@@ -684,6 +712,14 @@ def _cmd_config_add_level(args: argparse.Namespace) -> int:
             )
             return 1
 
+    doc_paths = (
+        [p.strip() for p in args.doc_paths.split(",")] if args.doc_paths else None
+    )
+    exclude_paths = (
+        [p.strip() for p in args.exclude_paths.split(",")]
+        if args.exclude_paths
+        else None
+    )
     entry = _build_level_entry(
         args.level,
         args.repo,
@@ -691,6 +727,9 @@ def _cmd_config_add_level(args: argparse.Namespace) -> int:
         args.name,
         args.description,
         args.writable,
+        ingester=args.ingester,
+        doc_paths=doc_paths,
+        exclude_paths=exclude_paths,
     )
     hierarchy.append(entry)
     hierarchy.sort(key=lambda h: h.get("level", 0))
@@ -841,14 +880,37 @@ def _cmd_hook_nudge(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_hook_capture(args: argparse.Namespace) -> int:
-    import sys
+_CAPTURE_TIMEOUT = 120
 
-    from lore.capture import capture_knowledge
-    from lore.config.manager import get_global_config, get_project_config
-    from lore.git import GitError, get_git_interface, key_to_path
-    from lore.llm import get_llm_provider
-    from lore.store.base import KnowledgeEntry
+
+def _write_capture_log(
+    stored: int,
+    prs: int,
+    negated: int,
+    proposed: list,
+    actions: list,
+) -> None:
+    from datetime import datetime, timezone
+
+    from lore.config.utils import state_dir
+
+    log_path = state_dir() / "capture.jsonl"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "stored": stored,
+        "prs_created": prs,
+        "negated": negated,
+        "proposed": len(proposed),
+        "total_actions": len(actions),
+        "actions": actions,
+    }
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+
+
+def _cmd_hook_capture(args: argparse.Namespace) -> int:
+    import os
 
     if not _is_capture_enabled():
         return 0
@@ -857,14 +919,46 @@ def _cmd_hook_capture(args: argparse.Namespace) -> int:
     if not transcript.strip():
         return 0
 
+    pid = os.fork()
+    if pid > 0:
+        return 0
+
+    try:
+        os.setsid()
+        import signal
+
+        _setup_file_logging()
+        import logging
+
+        log = logging.getLogger("lore.capture")
+        signal.alarm(_CAPTURE_TIMEOUT)
+        signal.signal(signal.SIGALRM, lambda *_: os._exit(1))
+        log.info("Capture fork started, transcript length=%d", len(transcript))
+        log.debug("Transcript preview: %s", transcript[:500])
+        _run_capture(transcript)
+        log.info("Capture fork completed")
+    except Exception:
+        import logging
+
+        logging.getLogger("lore.capture").exception("Capture fork failed")
+    finally:
+        os._exit(0)
+
+
+def _run_capture(transcript: str) -> None:
+    from lore.capture import capture_knowledge
+    from lore.config.manager import get_global_config, get_project_config
+    from lore.git import GitError, get_git_interface, key_to_path
+    from lore.llm import get_llm_provider
+    from lore.store.base import KnowledgeEntry
+
     try:
         cfg = get_global_config()
         if cfg.llm.provider == "none":
-            return 0
+            return
         provider = get_llm_provider()
-    except Exception as exc:
-        print(f"Capture skipped: {exc}", file=sys.stderr)
-        return 0
+    except Exception:
+        return
 
     store = _get_store()
     try:
@@ -872,10 +966,20 @@ def _cmd_hook_capture(args: argparse.Namespace) -> int:
     except Exception:
         project_cfg = None
 
+    import logging
+
+    log = logging.getLogger("lore.capture")
     result = capture_knowledge(transcript, store, provider, project_cfg, cfg.capture)
+    log.info(
+        "Capture result: %d candidates, %d new, %d skipped",
+        len(result.candidates),
+        len(result.new),
+        len(result.skipped),
+    )
 
     if not result.candidates:
-        return 0
+        _write_capture_log(0, 0, 0, [], [])
+        return
 
     writable_levels = {}
     if project_cfg:
@@ -887,6 +991,7 @@ def _cmd_hook_capture(args: argparse.Namespace) -> int:
     prs = 0
     negated = 0
     proposed = []
+    actions = []
     out = sys.stderr
 
     for c in result.new:
@@ -907,8 +1012,21 @@ def _cmd_hook_capture(args: argparse.Namespace) -> int:
                         branch=level_info[2],
                     )
                     prs += 1
+                    actions.append(
+                        {
+                            "action": "pr_created",
+                            "key": c.key,
+                            "level": c.suggested_level,
+                        }
+                    )
                 except GitError:
-                    pass
+                    actions.append(
+                        {
+                            "action": "pr_failed",
+                            "key": c.key,
+                            "level": c.suggested_level,
+                        }
+                    )
             else:
                 proposed.append((c, c.suggested_level))
         elif cfg.capture.auto_store_individual:
@@ -921,6 +1039,7 @@ def _cmd_hook_capture(args: argparse.Namespace) -> int:
             )
             store.store(entry)
             stored += 1
+            actions.append({"action": "stored", "key": c.key, "level": "individual"})
         else:
             proposed.append((c, "individual"))
 
@@ -939,6 +1058,9 @@ def _cmd_hook_capture(args: argparse.Namespace) -> int:
                 file=out,
             )
             stored += 1
+            actions.append(
+                {"action": "enriched", "key": action.existing_key, "from": c.key}
+            )
         except (KeyError, ValueError):
             pass
 
@@ -952,6 +1074,7 @@ def _cmd_hook_capture(args: argparse.Namespace) -> int:
                 level=0,
             )
             stored += 1
+            actions.append({"action": "updated", "key": c.key})
         except (KeyError, ValueError):
             pass
 
@@ -963,32 +1086,31 @@ def _cmd_hook_capture(args: argparse.Namespace) -> int:
                     c.negate_reason or "contradicted by session",
                 )
                 negated += 1
+                actions.append(
+                    {
+                        "action": "negated",
+                        "key": c.negate_key,
+                        "reason": c.negate_reason,
+                    }
+                )
             except (KeyError, ValueError):
                 pass
 
-    for action in result.skipped:
-        c = action.candidate
-        if action.action == "exact_match":
-            print(f"  [SKIP] {c.key} — already exists", file=out)
-        elif action.action == "rate_limited":
-            print(f"  [SKIP] {c.key} — rate limited", file=out)
-
-    print("\nKnowledge captured from session:", file=out)
-    if stored:
-        print(f"  {stored} stored", file=out)
-    if prs:
-        print(f"  {prs} PRs created", file=out)
-    if negated:
-        print(f"  {negated} negated", file=out)
+    for act in result.skipped:
+        c = act.candidate
+        actions.append({"action": "skipped", "key": c.key, "reason": act.action})
 
     for c, level in proposed:
-        snippet = c.value[:80].replace("\n", " ")
-        print(f"  [PROPOSE] {c.key} → {level} level", file=out)
-        print(f'    "{snippet}..."', file=out)
-        print(
-            f'    Run: lore store --key "{c.key}" --level {level}',
-            file=out,
+        actions.append(
+            {
+                "action": "proposed",
+                "key": c.key,
+                "level": level,
+                "snippet": c.value[:120].replace("\n", " "),
+            }
         )
+
+    _write_capture_log(stored, prs, negated, proposed, actions)
 
     # --- Auto-detect and run hook-triggered ingesters ---
     try:
@@ -1156,6 +1278,12 @@ def main(argv: list[str] | None = None) -> None:
 
     search_parser = sub.add_parser("search", help="Search knowledge base")
     search_parser.add_argument("topic", help="Search query")
+    search_parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Max results to return (default: 10)",
+    )
 
     sub.add_parser("conflicts", help="Show conflict report")
 
@@ -1204,6 +1332,23 @@ def main(argv: list[str] | None = None) -> None:
     add_level_parser.add_argument(
         "--description", default=None, help="Level description for LLM capture"
     )
+    add_level_parser.add_argument(
+        "--ingester",
+        default=None,
+        help="Ingester type (e.g. doc-repo for LLM extraction)",
+    )
+    add_level_parser.add_argument(
+        "--doc-paths",
+        default=None,
+        dest="doc_paths",
+        help="Comma-separated paths to scan (doc-repo ingester)",
+    )
+    add_level_parser.add_argument(
+        "--exclude-paths",
+        default=None,
+        dest="exclude_paths",
+        help="Comma-separated paths to exclude (doc-repo ingester)",
+    )
 
     dashboard_parser = sub.add_parser("dashboard", help="Launch web dashboard")
     dashboard_parser.add_argument(
@@ -1248,6 +1393,7 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     args = parser.parse_args(argv)
+    _setup_file_logging()
 
     handlers = {
         "init": _cmd_init,

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from lore.config.manager import get_global_config, get_project_config
-from lore.config.models import PROJECT_LEVEL
+from lore.config.models import PROJECT_LEVEL, HierarchyLevel
 from lore.config.utils import get_project_remote
 from lore.embedding import EmbeddingProvider, get_embedding_provider
 from lore.embedding.base import embed_to_blob
@@ -52,7 +52,11 @@ class SyncEngine:
 
         repo_levels = self._collect_hierarchy(projects)
 
-        for (repo, branch), (level, level_name) in repo_levels.items():
+        real_states: dict[str, RepoSyncState] | None = None
+        if self._state._force:
+            real_states = SyncStateManager(self._state._path).load()
+
+        for (repo, branch), hier in repo_levels.items():
             try:
                 commit_sha = self._git.clone_or_pull(repo, branch)
             except SyncError as exc:
@@ -63,10 +67,16 @@ class SyncEngine:
             repo_hash = GitRepoManager.repo_dir_hash(repo, branch)
             repo_path = self._git.repo_path(repo, branch)
 
+            old_state = sync_states.get(repo_hash)
+            if not old_state and hier.ingester and real_states:
+                old_state = real_states.get(repo_hash)
+            old_hashes = old_state.file_hashes if old_state else None
+            parsed_files = self._scan_repo(repo_path, hier, old_hashes)
+
             self._sync_one_repo(
-                scan_dir=repo_path,
-                level=level,
-                level_name=level_name,
+                parsed_files=parsed_files,
+                level=hier.level,
+                level_name=hier.name,
                 repo_id=repo,
                 branch_id=branch,
                 commit_sha=commit_sha,
@@ -75,6 +85,7 @@ class SyncEngine:
                 emb_provider=emb_provider,
                 result=result,
                 now=now,
+                ingested_from=hier.ingester or "git",
             )
 
         promoted = self._store.delete_promoted_locals()
@@ -96,18 +107,28 @@ class SyncEngine:
         now: str,
     ) -> None:
         for project_path in projects:
-            knowledge_dir = Path(project_path) / ".lore" / "knowledge"
+            repo_url, repo_branch = get_project_remote(project_path)
+
+            if repo_url and repo_branch:
+                try:
+                    commit_sha = self._git.clone_or_pull(repo_url, repo_branch)
+                except SyncError as exc:
+                    result.errors.append(str(exc))
+                    continue
+                cached_path = self._git.repo_path(repo_url, repo_branch)
+                knowledge_dir = cached_path / ".lore" / "knowledge"
+            else:
+                knowledge_dir = Path(project_path) / ".lore" / "knowledge"
+                try:
+                    commit_sha = GitRepoManager.get_head_sha(Path(project_path))
+                except Exception:
+                    commit_sha = "unknown"
+
             if not knowledge_dir.is_dir():
                 continue
 
-            repo_url, repo_branch = get_project_remote(project_path)
             repo_id = repo_url or f"local:{project_path}"
             branch_id = repo_branch or "local"
-
-            try:
-                commit_sha = GitRepoManager.get_head_sha(Path(project_path))
-            except Exception:
-                commit_sha = "unknown"
 
             repo_hash = hashlib.sha256(f"project:{project_path}".encode()).hexdigest()[
                 :16
@@ -116,7 +137,7 @@ class SyncEngine:
             result.repos_synced.append(f"project:{Path(project_path).name}")
 
             self._sync_one_repo(
-                scan_dir=knowledge_dir,
+                parsed_files=scan_repo(knowledge_dir),
                 level=PROJECT_LEVEL,
                 level_name="project",
                 repo_id=repo_id,
@@ -129,9 +150,69 @@ class SyncEngine:
                 now=now,
             )
 
+    def _scan_repo(
+        self,
+        repo_path: Path,
+        hier: HierarchyLevel,
+        old_hashes: dict[str, str] | None = None,
+    ) -> list[ParsedFile]:
+        if hier.ingester == "doc-repo":
+            from lore.ingest.doc_repo import DocRepoIngester
+            from lore.llm import get_llm_provider
+            from lore.sync.parser import compute_content_hash
+
+            provider = get_llm_provider()
+            ingester = DocRepoIngester(
+                provider,
+                doc_paths=hier.doc_paths,
+                exclude_paths=hier.exclude_paths,
+            )
+            files = ingester.scan_files(repo_path)
+            result: list[ParsedFile] = []
+            unchanged_files: set[str] = set()
+            for f in files:
+                rel = f.relative_to(repo_path).as_posix()
+                if old_hashes:
+                    raw = f.read_bytes()
+                    h = compute_content_hash(raw)
+                    if old_hashes.get(rel) == h:
+                        unchanged_files.add(rel)
+                        continue
+                try:
+                    result.extend(ingester.process_file(f, repo_path))
+                except Exception:
+                    logger.warning("Failed to process %s", f, exc_info=True)
+            if unchanged_files:
+                existing = self._store.list_by_repo(hier.repo, hier.branch)
+                for entry in existing:
+                    if not entry.provenance:
+                        continue
+                    prov = json.loads(entry.provenance)
+                    if prov.get("file_path") in unchanged_files:
+                        result.append(
+                            ParsedFile(
+                                key=entry.key,
+                                value=entry.value,
+                                tags=entry.tags,
+                                locked=entry.locked,
+                                created_by=None,
+                                projects=entry.projects,
+                                content_hash=old_hashes.get(prov["file_path"], ""),
+                                file_path=prov["file_path"],
+                            )
+                        )
+            return result
+        if hier.ingester is not None:
+            logger.warning(
+                "Unknown ingester %r for level %s, falling back to default scan",
+                hier.ingester,
+                hier.name or hier.level,
+            )
+        return scan_repo(repo_path)
+
     def _sync_one_repo(
         self,
-        scan_dir: Path,
+        parsed_files: list[ParsedFile],
         level: int,
         level_name: str | None,
         repo_id: str,
@@ -142,8 +223,8 @@ class SyncEngine:
         emb_provider: EmbeddingProvider | None,
         result: SyncResult,
         now: str,
+        ingested_from: str = "git",
     ) -> None:
-        parsed_files = scan_repo(scan_dir)
         current_keys: set[str] = set()
         new_hashes: dict[str, str] = {}
 
@@ -170,6 +251,7 @@ class SyncEngine:
                     branch_id,
                     commit_sha,
                     embeddings.get(pf.key),
+                    ingested_from=ingested_from,
                 )
                 others = conflicts_by_key.get(pf.key, [])
                 entry_id, action = self._store.sync_upsert(entry, pre_conflicts=others)
@@ -219,8 +301,8 @@ class SyncEngine:
 
     def _collect_hierarchy(
         self, projects: list[str]
-    ) -> dict[tuple[str, str], tuple[int, str | None]]:
-        repo_levels: dict[tuple[str, str], tuple[int, str | None]] = {}
+    ) -> dict[tuple[str, str], HierarchyLevel]:
+        repo_levels: dict[tuple[str, str], HierarchyLevel] = {}
         for project_path in projects:
             try:
                 cfg = get_project_config(project_path)
@@ -229,8 +311,8 @@ class SyncEngine:
                 continue
             for h in cfg.hierarchy:
                 key = (h.repo, h.branch)
-                if key not in repo_levels or h.level < repo_levels[key][0]:
-                    repo_levels[key] = (h.level, h.name)
+                if key not in repo_levels or h.level < repo_levels[key].level:
+                    repo_levels[key] = h
         return repo_levels
 
     def _resolve_conflicts(
@@ -291,6 +373,7 @@ class SyncEngine:
         branch: str,
         commit_sha: str,
         embedding_blob: bytes | None = None,
+        ingested_from: str = "git",
     ) -> KnowledgeEntry:
         return KnowledgeEntry(
             key=parsed.key,
@@ -301,7 +384,7 @@ class SyncEngine:
             locked=parsed.locked,
             repo_url=repo,
             repo_branch=branch,
-            ingested_from="git",
+            ingested_from=ingested_from,
             provenance=json.dumps(
                 {
                     "commit_sha": commit_sha,

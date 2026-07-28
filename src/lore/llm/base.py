@@ -46,6 +46,13 @@ class LLMProvider(ABC):
     ) -> list[DocChunkExtraction]: ...
 
 
+_KEY_FORMAT_INSTRUCTION = (
+    "  Key format: colon-separated segments using ONLY [a-zA-Z0-9_-] per segment.\n"
+    "  No brackets, slashes, commas, dots, spaces, or special characters.\n"
+    "  Good: bug:api:jwt-clock-skew, guide:deployment:k8s-setup\n"
+    "  Bad: [bug:api], auth/jwt, rate-limit:1000/minute, key with spaces\n"
+)
+
 SYNTHESIS_PROMPTS = {
     "small": (
         "You are a knowledge retrieval assistant.\n"
@@ -67,7 +74,8 @@ DOC_CHUNK_PROMPT = (
     "- key: colon-separated hierarchical key (e.g., guide:deployment:k8s-setup)\n"
     "  Use format type:domain:slug where type is one of:\n"
     "  decision, convention, pattern, bug, guide, reference\n"
-    "- summary: concise knowledge entry (include WHY, not just WHAT)\n"
+    + _KEY_FORMAT_INSTRUCTION
+    + "- summary: concise knowledge entry (include WHY, not just WHAT)\n"
     "- tags: relevant tags as a list\n"
     "- content_type: one of decision, convention, bug_pattern, general\n"
     "- suggested_level: individual, project, team, or org\n"
@@ -85,7 +93,8 @@ CAPTURE_PROMPT_BASE = (
     "\n"
     "For each, provide:\n"
     "- key: colon-separated segments (e.g., bug:api:jwt)\n"
-    "- value: the knowledge (include WHY, not just WHAT)\n"
+    + _KEY_FORMAT_INSTRUCTION
+    + "- value: the knowledge (include WHY, not just WHAT)\n"
     "- tags: relevant tags\n"
     "- suggested_level: use one of the available level names\n"
     "\n"

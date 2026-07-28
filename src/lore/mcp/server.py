@@ -155,9 +155,9 @@ def _resolve_level(level_name: str) -> LevelPolicy:
             repo_url=repo_url,
             repo_branch=repo_branch,
             writable=True,
-            stores_locally=True,
+            stores_locally=False,
             creates_pr=True,
-            locally_deletable=True,
+            locally_deletable=False,
             pr_path_prefix=".lore/knowledge/",
         )
     cfg = get_project_config()
@@ -194,13 +194,20 @@ def create_server() -> FastMCP:
     def query_knowledge(
         topic: str,
         level: str | None = None,
+        limit: int = 10,
     ) -> dict:
         """Search knowledge base using hybrid search (FTS + vector + RRF).
+
+        Results are returned in relevance order (best match first).
+        Use limit to control how many results you need — start with
+        a small limit (3-5) for targeted lookups.
 
         Args:
             topic: Search query. Matched against key, value, and tags via
                 FTS5, and semantically via vector embeddings when configured.
             level: Optional level number to filter results (e.g. "0", "1", "2").
+            limit: Max results to return (default 10). Use 3-5 for
+                targeted queries, higher for broad exploration.
 
         Returns:
             Hybrid-ranked results with priority resolution. When the same key
@@ -228,7 +235,7 @@ def create_server() -> FastMCP:
         raw_results = store.query_hybrid(
             topic,
             query_embedding=query_embedding,
-            limit=50,
+            limit=limit,
             filter_levels=filter_levels,
             min_similarity=cfg.search.min_similarity,
         )

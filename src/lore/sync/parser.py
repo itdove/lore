@@ -7,6 +7,10 @@ from pathlib import Path
 import yaml
 
 
+def compute_content_hash(raw: bytes) -> str:
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
 @dataclass
 class ParsedFile:
     key: str
@@ -30,7 +34,7 @@ def path_to_key(rel_path: str) -> str:
 
 def parse_markdown(file_path: Path, repo_root: Path) -> ParsedFile:
     raw = file_path.read_bytes()
-    content_hash = "sha256:" + hashlib.sha256(raw).hexdigest()
+    content_hash = compute_content_hash(raw)
     text = raw.decode("utf-8", errors="replace")
 
     rel = file_path.relative_to(repo_root).as_posix()

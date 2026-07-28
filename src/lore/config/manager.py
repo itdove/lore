@@ -135,6 +135,9 @@ def get_project_config(project_dir: str | Path | None = None) -> ProjectConfig:
                 name=entry.get("name"),
                 writable=entry.get("writable", True),
                 description=entry.get("description"),
+                ingester=entry.get("ingester"),
+                doc_paths=entry.get("doc_paths"),
+                exclude_paths=entry.get("exclude_paths"),
             )
         )
 

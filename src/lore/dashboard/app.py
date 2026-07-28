@@ -41,6 +41,8 @@ def create_app() -> None:
                 create_tab = ui.tab("create", label="New Entry", icon="add_circle")
                 conflicts_tab = ui.tab("conflicts", label="Conflicts", icon="warning")
                 sync_tab = ui.tab("sync", label="Sync", icon="sync")
+                capture_tab = ui.tab("capture", label="Capture", icon="auto_fix_high")
+                logs_tab = ui.tab("logs", label="Logs", icon="article")
                 config_tab = ui.tab("config", label="Config", icon="settings")
 
         tab_map = {
@@ -49,11 +51,15 @@ def create_app() -> None:
             "create": create_tab,
             "conflicts": conflicts_tab,
             "sync": sync_tab,
+            "capture": capture_tab,
+            "logs": logs_tab,
             "config": config_tab,
         }
         initial_tab = tab_map.get(tab, overview_tab)
 
         browse_container = None
+        capture_container = None
+        logs_container = None
 
         def on_tab_change(e):
             if e.value == "browse" and browse_container is not None:
@@ -62,6 +68,18 @@ def create_app() -> None:
                     from lore.dashboard.pages.browser import render_browser
 
                     render_browser()
+            elif e.value == "capture" and capture_container is not None:
+                capture_container.clear()
+                with capture_container:
+                    from lore.dashboard.pages.capture import render_capture
+
+                    render_capture()
+            elif e.value == "logs" and logs_container is not None:
+                logs_container.clear()
+                with logs_container:
+                    from lore.dashboard.pages.logs import render_logs
+
+                    render_logs()
 
         with ui.tab_panels(tabs, value=initial_tab, on_change=on_tab_change).classes(
             "w-full h-full"
@@ -92,6 +110,20 @@ def create_app() -> None:
                 from lore.dashboard.pages.sync import render_sync
 
                 render_sync()
+
+            with ui.tab_panel(capture_tab):
+                capture_container = ui.column().classes("w-full")
+                with capture_container:
+                    from lore.dashboard.pages.capture import render_capture
+
+                    render_capture()
+
+            with ui.tab_panel(logs_tab):
+                logs_container = ui.column().classes("w-full")
+                with logs_container:
+                    from lore.dashboard.pages.logs import render_logs
+
+                    render_logs()
 
             with ui.tab_panel(config_tab):
                 from lore.dashboard.pages.config_editor import render_config
