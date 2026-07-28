@@ -13,7 +13,7 @@ from lore.llm.base import (
     KnowledgeCandidate,
     LLMProvider,
 )
-from lore.store.base import KnowledgeEntry
+from lore.store.base import KnowledgeEntry, sanitize_key
 
 log = logging.getLogger("lore.llm")
 
@@ -72,7 +72,7 @@ class OllamaProvider(LLMProvider):
     ) -> list[KnowledgeCandidate]:
         from lore.llm.base import build_capture_prompt
 
-        existing_text = "\n".join(f"- [{e.key}]: {e.value}" for e in existing)
+        existing_text = "\n".join(f"- {e.key}" for e in existing[-50:])
         capture_prompt = build_capture_prompt(project_config)
         prompt = (
             f"{capture_prompt}\n\n"
@@ -121,6 +121,9 @@ def _parse_doc_extractions(raw: str) -> list[DocChunkExtraction]:
         summary = item.get("summary") or item.get("value", "")
         if not key or not summary:
             continue
+        key = sanitize_key(key)
+        if not key:
+            continue
         results.append(
             DocChunkExtraction(
                 key=key,
@@ -148,13 +151,18 @@ def _parse_candidates(raw: str) -> list[KnowledgeCandidate]:
     for item in items:
         if not isinstance(item, dict) or "key" not in item or "value" not in item:
             continue
+        key = sanitize_key(item["key"])
+        if not key:
+            continue
         candidates.append(
             KnowledgeCandidate(
-                key=item["key"],
+                key=key,
                 value=item["value"],
                 tags=item.get("tags", []),
                 suggested_level=item.get("suggested_level", "individual"),
-                negate_key=item.get("negate_key"),
+                negate_key=(
+                    sanitize_key(item["negate_key"]) if item.get("negate_key") else None
+                ),
                 negate_reason=item.get("negate_reason"),
             )
         )

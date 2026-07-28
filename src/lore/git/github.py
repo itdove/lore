@@ -20,7 +20,7 @@ _GH_TIMEOUT = 60
 
 
 def key_to_branch(key: str) -> str:
-    slug = key.replace(":", "-")
+    slug = key.replace(":", "-").lstrip(".")
     ts = int(time.time())
     return f"lore/{slug}-{ts}"
 

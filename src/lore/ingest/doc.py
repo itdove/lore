@@ -14,6 +14,21 @@ from lore.store.base import KnowledgeEntry, StoreBackend, validate_key
 log = logging.getLogger("lore.ingest")
 
 
+def extract_doc_chunks(provider: LLMProvider, file_path: Path):
+    """Chunk file, LLM extract, validate keys. Yields (ext, tags, chunk)."""
+    chunks = chunk_document(file_path)
+    for chunk in chunks:
+        extractions = provider.extract_from_chunk(
+            chunk.text, chunk.heading, chunk.source_file
+        )
+        for ext in extractions:
+            if validate_key(ext.key) is not None:
+                log.warning("Skipping invalid key from LLM: %s", ext.key)
+                continue
+            tags = ",".join(ext.tags) if ext.tags else None
+            yield ext, tags, chunk
+
+
 @register
 class DocIngester(LoreIngester):
     name = "doc"
@@ -42,38 +57,27 @@ class DocIngester(LoreIngester):
         )
 
     def extract_delta(self, since: datetime | None = None) -> list[KnowledgeEntry]:
-        chunks = chunk_document(self._file_path)
         entries: list[KnowledgeEntry] = []
 
-        for chunk in chunks:
-            extractions = self._provider.extract_from_chunk(
-                chunk.text, chunk.heading, chunk.source_file
+        for ext, tags, chunk in extract_doc_chunks(self._provider, self._file_path):
+            provenance = json.dumps(
+                {
+                    "source_file": chunk.source_file,
+                    "chunk_index": chunk.chunk_index,
+                    "heading": chunk.heading,
+                }
             )
-            for ext in extractions:
-                if validate_key(ext.key) is not None:
-                    log.warning("Skipping invalid key from LLM: %s", ext.key)
-                    continue
-
-                provenance = json.dumps(
-                    {
-                        "source_file": chunk.source_file,
-                        "chunk_index": chunk.chunk_index,
-                        "heading": chunk.heading,
-                    }
+            entries.append(
+                KnowledgeEntry(
+                    key=ext.key,
+                    value=ext.summary,
+                    level=self._level,
+                    level_name=self._level_name,
+                    tags=tags,
+                    ingested_from="doc",
+                    provenance=provenance,
                 )
-                tags = ",".join(ext.tags) if ext.tags else None
-
-                entries.append(
-                    KnowledgeEntry(
-                        key=ext.key,
-                        value=ext.summary,
-                        level=self._level,
-                        level_name=self._level_name,
-                        tags=tags,
-                        ingested_from="doc",
-                        provenance=provenance,
-                    )
-                )
+            )
 
         return entries
 

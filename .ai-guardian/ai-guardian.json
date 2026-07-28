@@ -9,5 +9,16 @@
       "__mro__",
       "__subclasses__"
     ]
+  },
+  "permissions": {
+    "rules": [
+      {
+        "mode": "allow",
+        "matcher": "mcp__lore__*",
+        "patterns": [
+          "mcp__lore__*"
+        ]
+      }
+    ]
   }
 }

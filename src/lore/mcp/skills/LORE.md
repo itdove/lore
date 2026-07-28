@@ -17,13 +17,20 @@ When you see a `<lore-context>` block:
 - No `<lore-context>` block was present but you suspect relevant knowledge exists
 - You need knowledge on a different topic than what was recalled
 
+Results are returned in relevance order (best match first).
+Use limit=3 for targeted lookups, higher for broad exploration.
+
 ## When to store
-- After fixing a bug — root cause and fix pattern
-- After an architectural decision — what and why
-- After discovering a cross-session pattern
-- Before ending session if something surprising happened
+Only store when the user explicitly asks:
+- "store in lore", "save to lore", "add to lore"
+- "remember this", "capture this decision"
+
+Do NOT proactively call store_knowledge during normal conversation.
+Knowledge from the session is automatically captured by the SessionEnd
+hook — no manual storage needed unless the user requests it.
 
 ## When NOT to store
+- Anything the user didn't ask you to store
 - Current task state or ephemeral context
 - Anything already in git history
 - Obvious facts derivable from reading the code

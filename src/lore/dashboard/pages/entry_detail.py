@@ -53,6 +53,18 @@ def show_entry_detail(store, entry_id: str) -> None:
             ui.markdown(entry.value).classes("q-my-md").props("no-html")
         ui.separator()
 
+        if entry.repo_url or entry.ingested_from:
+            with ui.row().classes("q-gutter-md q-my-sm text-caption text-grey"):
+                if entry.repo_url:
+                    source = entry.repo_url
+                    if source.startswith("local:"):
+                        source = source.removeprefix("local:")
+                    ui.label(f"Source: {source}")
+                if entry.repo_branch:
+                    ui.label(f"Branch: {entry.repo_branch}")
+                if entry.ingested_from:
+                    ui.label(f"Ingested via: {entry.ingested_from}")
+
         if entry.level > 0:
             repo_url = build_repo_file_url(entry)
             if repo_url:

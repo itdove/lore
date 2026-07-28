@@ -673,3 +673,142 @@ def test_sync_project_level_skips_missing_knowledge_dir(sync_env):
 
     assert result.created == 0
     assert len(result.repos_synced) == 0
+
+
+# --- Doc-repo ingester integration tests ---
+
+
+def _mock_llm_provider(extractions):
+    from lore.llm.base import DocChunkExtraction
+
+    provider = mock.MagicMock()
+    provider.extract_from_chunk.return_value = [
+        DocChunkExtraction(**e) for e in extractions
+    ]
+    return provider
+
+
+def test_sync_doc_repo_ingester(sync_env):
+    """doc-repo ingester uses LLM extraction and sets ingested_from."""
+    repo = "github.com/org/docs"
+    branch = "main"
+    _setup_repo(
+        sync_env["cache"],
+        repo,
+        branch,
+        {"docs/guide.md": "# Deploy\n" + "word " * 100},
+    )
+    hierarchy = [
+        {
+            "level": 3,
+            "repo": repo,
+            "branch": branch,
+            "name": "docs",
+            "writable": False,
+            "ingester": "doc-repo",
+            "doc_paths": ["docs"],
+        }
+    ]
+
+    mock_provider = _mock_llm_provider(
+        [{"key": "guide:deploy", "summary": "How to deploy."}]
+    )
+
+    with (
+        _mock_project_config(hierarchy),
+        _mock_clone_or_pull(sync_env["git_mgr"]),
+        mock.patch("lore.llm.get_llm_provider", return_value=mock_provider),
+    ):
+        result = sync_env["engine"].sync_all(["/fake"])
+
+    assert result.created == 1
+    entry = sync_env["store"].get("guide:deploy")
+    assert entry is not None
+    assert entry.value == "How to deploy."
+    assert entry.ingested_from == "doc-repo"
+    assert entry.level == 3
+    assert entry.level_name == "docs"
+
+
+def test_sync_doc_repo_unchanged_file_skips_reextraction(sync_env):
+    """Re-sync with unchanged source file skips LLM — entries preserved."""
+    repo = "github.com/org/docs"
+    branch = "main"
+    _setup_repo(
+        sync_env["cache"],
+        repo,
+        branch,
+        {"docs/guide.md": "# Guide\n" + "word " * 100},
+    )
+    hierarchy = [
+        {
+            "level": 3,
+            "repo": repo,
+            "branch": branch,
+            "name": "docs",
+            "ingester": "doc-repo",
+            "doc_paths": ["docs"],
+        }
+    ]
+
+    mock_provider = _mock_llm_provider(
+        [{"key": "guide:alpha", "summary": "Alpha content."}]
+    )
+    with (
+        _mock_project_config(hierarchy),
+        _mock_clone_or_pull(sync_env["git_mgr"]),
+        mock.patch("lore.llm.get_llm_provider", return_value=mock_provider),
+    ):
+        r1 = sync_env["engine"].sync_all(["/fake"])
+
+    assert r1.created == 1
+    assert sync_env["store"].get("guide:alpha") is not None
+
+    with (
+        _mock_project_config(hierarchy),
+        _mock_clone_or_pull(sync_env["git_mgr"]),
+        mock.patch("lore.llm.get_llm_provider", return_value=mock_provider),
+    ):
+        r2 = sync_env["engine"].sync_all(["/fake"])
+
+    assert r2.created == 0
+    assert r2.deleted == 0
+    assert sync_env["store"].get("guide:alpha") is not None
+
+
+def test_sync_unknown_ingester_falls_back(sync_env):
+    """Unknown ingester logs warning and falls back to default scan."""
+    repo = "github.com/org/k"
+    branch = "main"
+    _setup_repo(
+        sync_env["cache"],
+        repo,
+        branch,
+        {"topic/a.md": "---\ntags: [x]\n---\nContent.\n"},
+    )
+    hierarchy = [
+        {
+            "level": 2,
+            "repo": repo,
+            "branch": branch,
+            "name": "team",
+            "ingester": "unknown-typo",
+        }
+    ]
+
+    with (
+        _mock_project_config(hierarchy),
+        _mock_clone_or_pull(sync_env["git_mgr"]),
+        mock.patch("lore.sync.engine.logger") as mock_logger,
+    ):
+        result = sync_env["engine"].sync_all(["/fake"])
+
+    assert result.created == 1
+    entry = sync_env["store"].get("topic:a")
+    assert entry is not None
+    assert entry.ingested_from == "unknown-typo"
+    mock_logger.warning.assert_any_call(
+        "Unknown ingester %r for level %s, falling back to default scan",
+        "unknown-typo",
+        "team",
+    )

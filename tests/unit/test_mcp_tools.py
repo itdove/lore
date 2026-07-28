@@ -959,9 +959,9 @@ def test_resolve_level_project(monkeypatch):
     assert policy.repo_url == "https://github.com/org/proj"
     assert policy.repo_branch == "main"
     assert policy.writable is True
-    assert policy.stores_locally is True
+    assert policy.stores_locally is False
     assert policy.creates_pr is True
-    assert policy.locally_deletable is True
+    assert policy.locally_deletable is False
     assert policy.pr_path_prefix == ".lore/knowledge/"
 
 
@@ -1000,7 +1000,7 @@ def test_resolve_level_shared(monkeypatch):
     assert policy.pr_path_prefix is None
 
 
-def test_store_knowledge_project_writes_sqlite_and_pr(tools, store, monkeypatch):
+def test_store_knowledge_project_creates_pr_only(tools, store, monkeypatch):
     from lore.git.base import GitInterface
 
     class _MockGit(GitInterface):
@@ -1024,11 +1024,9 @@ def test_store_knowledge_project_writes_sqlite_and_pr(tools, store, monkeypatch)
     )
     assert result["level"] == 1
     assert result["pr_url"] == "https://github.com/org/proj/pull/42"
-    assert result["id"] is not None
 
     entry = store.get_by_key_and_level("cfg:db:pool", 1)
-    assert entry is not None
-    assert entry.value == "use 10 connections"
+    assert entry is None
 
 
 def test_store_knowledge_project_no_remote_sqlite_only(tools, store, monkeypatch):
@@ -1045,9 +1043,9 @@ def test_store_knowledge_project_no_remote_sqlite_only(tools, store, monkeypatch
     assert entry is not None
 
 
-def test_delete_knowledge_allows_project_level(tools, store, monkeypatch):
+def test_delete_knowledge_rejects_project_level(tools, store, monkeypatch):
     monkeypatch.setattr("lore.mcp.server.get_project_remote", lambda: (None, None))
 
     store.store(_make_entry(key="cfg:db:pool", value="v", level=1))
     result = tools["delete_knowledge"](key="cfg:db:pool", level="project")
-    assert result.get("deleted") is True
+    assert "error" in result

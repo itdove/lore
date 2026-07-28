@@ -26,6 +26,7 @@ Lore is an MCP server that gives AI coding agents shared team knowledge stored i
 | View/edit config | `lore config show\|set\|edit` | — | — |
 | Web dashboard | `lore dashboard` | — | — |
 | Check sync status | `lore sync --status` | — | — |
+| Doc repo ingestion | `lore sync` | — | — |
 
 ---
 
@@ -52,7 +53,8 @@ This creates:
 - `~/development/ai/lore-demo/` — demo project with lore initialized
 - `~/development/ai/lore-demo/.lore/knowledge/` — project-level knowledge (level 1, implicit, in project repo)
 - `~/development/ai/lore-demo-team-knowledge/` — git repo with 4 team-wide entries (level 2)
-- `.lore/config.json` — project config with team hierarchy (level 2)
+- `~/development/ai/lore-demo-docs/` — local git repo with unstructured docs for doc-repo ingestion (level 3)
+- `.lore/config.json` — project config with team hierarchy (levels 2-3)
 - `.mcp.json` — MCP server registration
 - `.claude/settings.json` — Claude Code hooks (recall, nudge, capture)
 - `~/.config/lore/config.json` — global config (ollama embedding, LLM, capture settings)
@@ -79,15 +81,18 @@ Settings are split between global and project config:
 
 ### Hierarchy Levels
 
-The demo uses 3 levels:
+The demo uses 4 levels:
 
-| Level | Name | Description | Storage |
-|-------|------|-------------|---------|
-| 0 | individual | Local entries, no review needed | SQLite only |
-| 1 | project | Discoveries about this specific project | SQLite + `.lore/knowledge/` in project repo (implicit) |
-| 2 | team | General coding and development rules | `lore-demo-team-knowledge` repo |
+| Level | Name | Description | Storage | Ingester |
+|-------|------|-------------|---------|----------|
+| 0 | individual | Local entries, no review needed | SQLite only | — |
+| 1 | project | Discoveries about this specific project | SQLite + `.lore/knowledge/` in project repo (implicit) | — |
+| 2 | team | General coding and development rules | `lore-demo-team-knowledge` repo | default (frontmatter) |
+| 3 | docs | LLM-extracted knowledge from unstructured docs | `lore-demo-docs` local repo | `doc-repo` |
 
 Levels 0 and 1 are **implicit** — no config entry needed. Level 1 uses `.lore/knowledge/` in the project repo itself. User-defined levels (2+) each point to a separate git repo.
+
+Level 3 uses `ingester: "doc-repo"` with `doc_paths` and `exclude_paths` to scan specific directories and extract knowledge via LLM. Requires Ollama.
 
 Each user-defined level can have:
 - `writable: true` (default) — agents can store via MCP, creates PRs
@@ -106,8 +111,7 @@ Git sync derives keys from file path: `bug/api/jwt.md` → `bug:api:jwt`
 
 ### Write Isolation
 
-- **Level 1 (project):** `store_knowledge(level="project")` writes to SQLite immediately (user sees it right away) AND creates a PR to `.lore/knowledge/` in the project repo. Teammates get the entry after the PR is merged and `lore sync` runs.
-- **Levels 2+ (shared repos):** `store_knowledge` creates a PR only — no DB write. DB entries for shared levels are populated exclusively by `lore sync` after PR merge. Git repo is the single source of truth.
+- **Levels 1+ (project and shared repos):** `store_knowledge` creates a PR only — no DB write. DB entries are populated exclusively by `lore sync` after PR merge. Git repo is the single source of truth.
 
 ### Optional: Ollama Setup (for semantic search + LLM synthesis + session-end capture)
 
@@ -127,19 +131,13 @@ ollama pull phi4-mini           # LLM synthesis + capture
 ollama pull nomic-embed-text    # Embeddings for semantic search
 ```
 
-Configure LLM (per-project — not set during init):
+The setup script (`create-demo-config.sh`) already configures embedding and LLM providers. If running manually, the equivalent commands are:
 
 ```bash
-cd ~/development/ai/lore-demo
+lore config set lore.search.embedding_provider ollama
+lore config set lore.search.embedding_model nomic-embed-text
 lore config set lore.llm.provider ollama
 lore config set lore.llm.model phi4-mini
-```
-
-Then re-sync to generate embeddings:
-
-```bash
-rm -f ~/.local/state/lore/sync-state.json
-lore sync
 ```
 
 With Ollama enabled:
@@ -276,26 +274,23 @@ lore search "docker layer cache"
 
 Expected: entry appears with `(individual)` level label.
 
-### Scene 5: Promote Knowledge to Project Level (SQLite + PR)
+### Scene 5: Store Knowledge at Project Level (PR-based)
 
-Show the hybrid store flow for project-level knowledge. When storing at level "project", lore writes to SQLite immediately AND creates a PR to `.lore/knowledge/` in the project repo.
+Show the PR-based store flow. The agent only stores when explicitly asked. When storing at level "project", lore creates a PR to `.lore/knowledge/` in the project repo. The entry appears in the DB after the PR is merged and `lore sync` runs.
 
 **Prompt Claude Code:**
 
 > "Store in lore at project level: key 'bug:deploy:docker-layer-cache', value 'Docker layer cache invalidation causes 15-minute builds when requirements.txt changes. Fix: use --mount=type=cache for pip install layer.', tags 'bug,docker,ci'"
 
 Claude Code calls `store_knowledge(..., level="project")` which:
-1. Writes to local SQLite immediately (user sees it right away)
-2. Creates a branch `lore/bug-deploy-docker-layer-cache-<timestamp>`
-3. Writes the markdown file at `.lore/knowledge/bug/deploy/docker-layer-cache.md`
-4. Pushes and creates a PR via `gh pr create`
-5. Returns `{"id": "...", "key": "...", "level": 1, "pr_url": "https://github.com/..."}`
+1. Creates a branch `lore/lore-knowledge-bug-deploy-docker-layer-cache-<timestamp>`
+2. Writes the markdown file at `.lore/knowledge/bug/deploy/docker-layer-cache.md`
+3. Pushes and creates a PR via `gh pr create`
+4. Returns `{"key": "...", "level": 1, "pr_url": "https://github.com/..."}`
 
-**Key difference from team level:** The entry is in the user's local DB immediately. Teammates get it after the PR merges and they run `lore sync`.
+> **Variation:** To store at team level (level 2), use `level="team"` instead. This targets the team knowledge repo — useful when the knowledge applies across all projects.
 
-> **Variation:** To store at team level (level 2), use `level="team"` instead. This targets the team knowledge repo with PR-only behavior (no local DB write) — useful when the knowledge applies across all projects.
-
-The team reviews the PR in normal git workflow. Once merged, next `lore sync` picks it up for everyone.
+The team reviews the PR in normal git workflow. Once merged, `lore sync` picks it up for everyone.
 
 > **Note:** After the PR is created, show it in the GitHub UI — the file appears at `.lore/knowledge/bug/deploy/docker-layer-cache.md` with proper frontmatter.
 
@@ -359,7 +354,52 @@ Now Claude Code can surface this when someone writes mocked DB tests.
 
 > **Note:** With auto-sync enabled (#40), the recall hook checks staleness and spawns a background sync automatically. Manual `lore sync` is still available for immediate sync.
 
-### Scene 9: Conflict Detection
+### Scene 9: Doc Repo Ingestion (requires Ollama)
+
+Show that `lore sync` can ingest unstructured documentation repos using LLM extraction. Unlike team knowledge (level 2) which uses frontmatter-based markdown, the docs repo (level 3) uses `ingester: "doc-repo"` to extract knowledge from plain documentation files.
+
+The demo docs repo was created by the setup script with guides and architecture docs — no lore frontmatter, just regular documentation.
+
+```bash
+cd ~/development/ai/lore-demo
+lore sync --force --verbose
+```
+
+Expected output includes entries extracted from the docs:
+
+```
+Sync complete: N created, 0 updated, 0 deleted, 0 promoted
+  [+] guide:deployment:k8s-setup (docs/guides/deployment.md)
+  [+] reference:api:auth-endpoints (docs/reference/api-auth.md)
+```
+
+The LLM generates structured keys, summaries, and tags from unstructured documentation. Each entry has provenance tracking back to the source file and commit.
+
+```bash
+lore search "deployment kubernetes"
+```
+
+Expected: entries extracted from the deployment guide, with `(docs)` level label.
+
+**Configuration in `.lore/config.json`:**
+
+```json
+{
+  "level": 3,
+  "repo": "/path/to/lore-demo-docs",
+  "branch": "main",
+  "name": "docs",
+  "ingester": "doc-repo",
+  "doc_paths": ["docs/guides", "docs/reference"],
+  "exclude_paths": ["docs/internal"]
+}
+```
+
+- `doc_paths` — only scan these directories (omit to scan entire repo)
+- `exclude_paths` — skip these directories
+- `ingester: "doc-repo"` — use LLM extraction instead of frontmatter parser
+
+### Scene 10: Conflict Detection
 
 ```bash
 lore conflicts
@@ -367,7 +407,7 @@ lore conflicts
 
 Shows entries where the same key exists at different hierarchy levels with different values. Each conflict displays both sides and the resolution status.
 
-### Scene 10: Web Dashboard
+### Scene 11: Web Dashboard
 
 Launch the NiceGUI dashboard to browse knowledge visually:
 
@@ -391,7 +431,7 @@ Entry detail dialog shows:
 - Shared writable levels: view only (no edit/delete — managed via git)
 - Read-only levels: "Read-only" badge, no action buttons
 
-### Scene 11: Health Check (via MCP)
+### Scene 12: Health Check (via MCP)
 
 Claude Code can call `health_check()` to get:
 
@@ -405,7 +445,7 @@ Claude Code can call `health_check()` to get:
 }
 ```
 
-### Scene 12: Configuration
+### Scene 13: Configuration
 
 View and edit config without touching JSON files:
 
@@ -424,33 +464,48 @@ lore config set lore.search.min_similarity 0.5         # → project config
 lore config edit
 ```
 
-### Scene 13: Session-End Capture
+### Scene 14: Session-End Capture
 
-When a Claude Code session ends, the `SessionEnd` hook fires `lore hook capture`:
+When a Claude Code session ends, the `SessionEnd` hook fires `lore hook capture`. The hook forks a background process (so Claude Code exits immediately) that extracts knowledge from the session.
 
-1. Reads the session transcript from stdin
+**How to trigger:** Have a conversation that mentions knowledge WITHOUT asking Claude to store it. The capture hook picks up what the agent didn't explicitly save.
+
+```bash
+cd ~/development/ai/lore-demo
+claude
+```
+
+Example conversation (do NOT say "store in lore"):
+
+> "We found that our Celery workers deadlock when using Redis as both broker and result backend on the same connection. The fix was to use a separate Redis instance for the result backend."
+
+Then exit (`/exit` or Ctrl+D). Wait ~15 seconds for the background LLM extraction.
+
+**Check results:**
+
+```bash
+cat ~/.local/state/lore/capture.jsonl
+```
+
+Or open the dashboard and click the **Capture** tab:
+
+```bash
+lore dashboard
+```
+
+**Pipeline:**
+
+1. Reads session transcript from stdin, forks to background
 2. LLM extracts knowledge candidates (bugs, decisions, patterns)
-3. Candidates are classified:
-   - **NEW** → stored individually (if `auto_store_individual: true`) or proposed
+3. Candidates classified:
+   - **NEW** → stored individually (if `auto_store_individual: true`)
    - **ENRICH** → merged into existing similar entry (embedding dedup)
    - **UPDATE** → updates existing entry with new value
    - **NEGATE** → marks contradicted entries as negated
    - **SKIP** → exact duplicates or rate-limited
-4. Shared-level candidates are proposed for manual review (if `auto_pr_shared: false`)
+4. Results logged to `capture.jsonl` and visible in the dashboard Capture tab
 
-Output to stderr:
-
-```
-  [ENRICH] bug:api:jwt-clock-skew ← bug:auth:jwt-edge-case
-  [SKIP] decision:arch:fastapi-over-flask — already exists
-
-Knowledge captured from session:
-  2 stored
-  1 negated
-  [PROPOSE] convention:testing:integration-db → team level
-    "Use real DB connections in integration tests..."
-    Run: lore store --key "convention:testing:integration-db" --level team
-```
+> **Note:** Agents only call `store_knowledge` when the user explicitly asks (e.g., "store in lore"). Session-end capture is the automatic safety net for knowledge that would otherwise be lost.
 
 Capture config:
 
@@ -479,7 +534,7 @@ Capture config:
 6. **Writable flag** — control which levels agents can write to, read-only for compliance
 7. **Locked entries** — architectural decisions that can't be overridden locally
 8. **Sync is incremental** — content-hash based, only processes changed files
-9. **Write isolation** — level 1 (project) writes SQLite + PR; levels 2+ create PRs only. Git repo is source of truth for shared levels
+9. **Write isolation** — level 0 writes SQLite only; levels 1+ create PRs only. DB populated by sync after merge. Git repo is source of truth
 10. **Auto-recall** — knowledge injected into agent context before every prompt
 11. **Session-end capture** — LLM extracts, dedup enriches, rate limits, proposes for review
 12. **PR-based review** — shared knowledge changes auto-create PRs for team review
@@ -491,53 +546,21 @@ Capture config:
 18. **Auto-sync** — background sync on staleness, never blocks the hook
 19. **Ollama optional** — semantic search, LLM synthesis, and capture work with local Ollama, but basic FTS5 search works without it
 20. **Dedup on store** — cosine similarity detects near-duplicate entries, prevents knowledge sprawl
+21. **Doc repo ingestion** — `ingester: "doc-repo"` extracts structured knowledge from unstructured docs via LLM, with `doc_paths`/`exclude_paths` filtering
 
 ## Demo Cleanup
 
-Run this to reset everything for the next demo:
+Run the cleanup script (shows what will be deleted, asks for confirmation):
 
 ```bash
-# 1. Remove demo project (includes .mcp.json, .claude/settings.json, .lore/)
-rm -rf ~/development/ai/lore-demo
-
-# 2. Remove team knowledge repo local clone
-rm -rf ~/development/ai/lore-demo-team-knowledge
-
-# 3. Delete GitHub repo (and any PR branches created during demo)
-gh repo delete itdove/lore-demo-team-knowledge --yes
-
-# 4. Remove lore global config, database, cache, and state
-rm -rf ~/.config/lore
-rm -rf ~/.local/share/lore
-rm -rf ~/.local/state/lore
-rm -rf ~/.cache/lore
-
-# 5. Remove lore from enabledMcpjsonServers in global Claude settings
-python3 -c "
-import json; from pathlib import Path
-p = Path.home() / '.claude' / 'settings.json'
-if p.exists():
-    d = json.loads(p.read_text())
-    servers = d.get('enabledMcpjsonServers', [])
-    if 'lore' in servers:
-        servers.remove('lore')
-        p.write_text(json.dumps(d, indent=2) + '\n')
-        print('Removed lore from enabledMcpjsonServers')
-    else:
-        print('lore not in enabledMcpjsonServers')
-"
+cd /path/to/lore
+./scripts/delete-demo-config.sh
 ```
 
-**Verify cleanup:**
+The script auto-detects your GitHub username, or pass it explicitly:
 
 ```bash
-# Should all return "not found" or empty
-ls ~/development/ai/lore-demo 2>/dev/null || echo "demo project: cleaned"
-ls ~/development/ai/lore-demo-team-knowledge 2>/dev/null || echo "team knowledge repo: cleaned"
-gh repo view itdove/lore-demo-team-knowledge 2>/dev/null || echo "team github repo: cleaned"
-ls ~/.config/lore 2>/dev/null || echo "global config: cleaned"
-ls ~/.local/share/lore 2>/dev/null || echo "database: cleaned"
-ls ~/.cache/lore 2>/dev/null || echo "cache: cleaned"
+./scripts/delete-demo-config.sh myusername
 ```
 
 After cleanup, restart Claude Code and re-run from **Demo Setup** to demo again.
@@ -548,6 +571,6 @@ After cleanup, restart Claude Code and re-run from **Demo Setup** to demo again.
 
 - **Multi-agent hooks** (#15) — Cursor, Copilot, Windsurf, and 10 more agents
 - **Ingester framework** (#16) — Auto-ingest from external tools (ReasonsForge, OpenWolf, Jira)
-- **Doc ingestion** (#36, #37) — LLM-powered ingestion of unstructured documentation: `lore ingest --file <path>`
+- **Doc ingestion CLI** (#36) — `lore ingest --file <path>` for one-off file ingestion (doc-repo sync via #37 is done)
 - **PyPI publication** (#34) — `pip install lorehive`
 - **NotebookLM integration** (#38) — One notebook per hierarchy level

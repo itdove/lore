@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from nicegui import ui
 
 from lore.dashboard.pages import format_level_label
-from lore.dashboard.state import get_dashboard_store
+from lore.dashboard.state import get_dashboard_store, reset_store
 
 
 @dataclass
@@ -21,12 +21,14 @@ def render_browser() -> None:
 
     store = get_dashboard_store()
     filters = _BrowserFilters()
-    table_container = ui.column().classes("w-full")
+    state: dict = {}
 
     def refresh_table():
-        table_container.clear()
-        with table_container:
-            _build_table(store, filters)
+        reset_store()
+        tc = state["table_container"]
+        tc.clear()
+        with tc:
+            _build_table(get_dashboard_store(), filters)
 
     def _set_filter(attr: str):
         def handler(e):
@@ -59,7 +61,11 @@ def render_browser() -> None:
             on_change=_set_filter("show_negated"),
         ).props("dense")
 
-        ui.button("Refresh", icon="refresh", on_click=refresh_table).props("flat")
+        ui.button("Refresh", icon="refresh", on_click=lambda: refresh_table()).props(
+            "flat"
+        )
+
+    state["table_container"] = ui.column().classes("w-full")
 
     refresh_table()
 
@@ -68,7 +74,13 @@ def _get_level_options(store) -> dict:
     from lore.config.manager import get_project_config
     from lore.dashboard.state import get_registered_projects
 
-    options: dict = {None: "All Levels", 0: "Individual (0)"}
+    health = store.health()
+    counts = {int(k): v for k, v in health["entries_by_level"].items()}
+    total = sum(counts.values())
+
+    options: dict = {None: f"All Levels ({total})"}
+    options[0] = f"Individual ({counts.get(0, 0)})"
+    options[1] = f"Project ({counts.get(1, 0)})"
 
     for project_dir in get_registered_projects():
         try:
@@ -76,16 +88,14 @@ def _get_level_options(store) -> dict:
             for h in cfg.hierarchy:
                 if h.level not in options:
                     name = h.name or f"Level {h.level}"
-                    options[h.level] = f"{name} ({h.level})"
+                    c = counts.get(h.level, 0)
+                    options[h.level] = f"{name} ({c})"
         except Exception:
             pass
 
-    if len(options) <= 2:
-        health = store.health()
-        for level in sorted(health["entries_by_level"].keys()):
-            lvl = int(level)
-            if lvl not in options:
-                options[lvl] = f"Level {lvl} ({lvl})"
+    for lvl, c in sorted(counts.items()):
+        if lvl not in options:
+            options[lvl] = f"Level {lvl} ({c})"
 
     return options
 
@@ -120,6 +130,7 @@ def _build_table(store, filters: _BrowserFilters) -> None:
         },
         {"name": "status", "label": "", "field": "negated", "align": "left"},
         {"name": "level", "label": "Level", "field": "level_display", "align": "left"},
+        {"name": "source", "label": "Source", "field": "source", "align": "left"},
         {"name": "tags", "label": "Tags", "field": "tags", "align": "left"},
         {"name": "value", "label": "Value", "field": "value_snippet", "align": "left"},
         {
@@ -141,6 +152,7 @@ def _build_table(store, filters: _BrowserFilters) -> None:
                 "key": entry.key,
                 "level": entry.level,
                 "level_display": level_label,
+                "source": _format_source(entry),
                 "tags": entry.tags or "",
                 "value_snippet": snippet,
                 "updated_at": entry.updated_at or "",
@@ -192,6 +204,19 @@ def _build_table(store, filters: _BrowserFilters) -> None:
     )
 
     table.on("view", lambda e: _show_detail_dialog(store, e.args["id"]))
+
+
+def _format_source(entry) -> str:
+    if entry.level == 0:
+        return "local"
+    if not entry.repo_url:
+        return ""
+    url = entry.repo_url
+    if "/" in url:
+        url = url.rstrip("/").rsplit("/", 1)[-1]
+    if url.endswith(".git"):
+        url = url[:-4]
+    return url
 
 
 def _show_detail_dialog(store, entry_id: str) -> None:

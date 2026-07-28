@@ -5,6 +5,16 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 _KEY_RE = re.compile(r"^[a-zA-Z0-9_-]+(:[a-zA-Z0-9_-]+)*$")
+_INVALID_CHARS_RE = re.compile(r"[^a-zA-Z0-9_:\-]")
+
+
+def sanitize_key(key: str) -> str:
+    key = key.strip().strip("[](){}")
+    key = key.replace("/", "-").replace(" ", "-").replace(",", "-").replace(".", "-")
+    key = _INVALID_CHARS_RE.sub("", key)
+    key = re.sub(r"-+", "-", key)
+    key = ":".join(seg.strip("-") for seg in key.split(":") if seg.strip("-"))
+    return key.lower()
 
 
 def validate_key(key: str) -> str | None:

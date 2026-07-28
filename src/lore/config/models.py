@@ -28,6 +28,9 @@ class HierarchyLevel:
     name: str | None = None
     writable: bool = True
     description: str | None = None
+    ingester: str | None = None
+    doc_paths: list[str] | None = None
+    exclude_paths: list[str] | None = None
 
 
 @dataclass

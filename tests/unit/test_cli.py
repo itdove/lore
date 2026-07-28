@@ -275,7 +275,7 @@ def test_search_returns_results(store, capsys):
 
             from lore.cli import _cmd_search
 
-            rc = _cmd_search(argparse.Namespace(topic="JWT"))
+            rc = _cmd_search(argparse.Namespace(limit=10, topic="JWT"))
 
     assert rc == 0
     out = capsys.readouterr().out
@@ -293,7 +293,7 @@ def test_search_no_results(store, capsys):
 
             from lore.cli import _cmd_search
 
-            rc = _cmd_search(argparse.Namespace(topic="nonexistent"))
+            rc = _cmd_search(argparse.Namespace(limit=10, topic="nonexistent"))
 
     assert rc == 0
     assert "No results" in capsys.readouterr().out
@@ -340,7 +340,7 @@ def test_search_priority_resolution(store, capsys):
 
                 from lore.cli import _cmd_search
 
-                rc = _cmd_search(argparse.Namespace(topic="naming"))
+                rc = _cmd_search(argparse.Namespace(limit=10, topic="naming"))
 
     assert rc == 0
     out = capsys.readouterr().out
@@ -381,7 +381,7 @@ def test_search_uses_hybrid_when_embedding_configured(store, capsys):
                     with mock.patch.object(
                         store, "query_hybrid", wraps=store.query_hybrid
                     ) as mock_hybrid:
-                        rc = _cmd_search(argparse.Namespace(topic="JWT"))
+                        rc = _cmd_search(argparse.Namespace(limit=10, topic="JWT"))
 
     assert rc == 0
     mock_hybrid.assert_called_once()
@@ -415,7 +415,7 @@ def test_search_falls_back_to_fts_when_no_embedding(store, capsys):
                 with mock.patch.object(
                     store, "query_hybrid", wraps=store.query_hybrid
                 ) as mock_hybrid:
-                    rc = _cmd_search(argparse.Namespace(topic="JWT"))
+                    rc = _cmd_search(argparse.Namespace(limit=10, topic="JWT"))
 
     assert rc == 0
     mock_hybrid.assert_called_once()
@@ -456,7 +456,7 @@ def test_search_embedding_failure_falls_back_to_fts(store, capsys):
                     with mock.patch.object(
                         store, "query_hybrid", wraps=store.query_hybrid
                     ) as mock_hybrid:
-                        rc = _cmd_search(argparse.Namespace(topic="JWT"))
+                        rc = _cmd_search(argparse.Namespace(limit=10, topic="JWT"))
 
     assert rc == 0
     mock_hybrid.assert_called_once()
