@@ -18,6 +18,8 @@ from lore.store.base import KnowledgeEntry, sanitize_key
 log = logging.getLogger("lore.llm")
 
 _SMALL_MODEL_PATTERNS = ("phi", "qwen", ":1b", ":3b", ":7b", "gemma:2b")
+_CAPTURE_VALUE_SNIPPET_CHARS = 240
+_CAPTURE_FALLBACK_ENTRY_LIMIT = 50
 
 
 class OllamaProvider(LLMProvider):
@@ -72,7 +74,7 @@ class OllamaProvider(LLMProvider):
     ) -> list[KnowledgeCandidate]:
         from lore.llm.base import build_capture_prompt
 
-        existing_text = "\n".join(f"- {e.key}" for e in existing[-50:])
+        existing_text = _format_capture_existing(existing)
         capture_prompt = build_capture_prompt(project_config)
         prompt = (
             f"{capture_prompt}\n\n"
@@ -100,6 +102,27 @@ class OllamaProvider(LLMProvider):
         if not raw:
             return []
         return _parse_doc_extractions(raw)
+
+
+def _format_capture_existing(existing: list[KnowledgeEntry]) -> str:
+    """Format bounded capture context with optional short value snippets.
+
+    Capture passes value-less entries when semantic search is unavailable. In
+    that case, keeping only the key preserves duplicate and negation hints
+    without adding unbounded or low-quality context to the prompt.
+    """
+
+    lines = []
+    for entry in existing[-_CAPTURE_FALLBACK_ENTRY_LIMIT:]:
+        if not entry.value:
+            lines.append(f"- {entry.key}")
+            continue
+
+        value = " ".join(entry.value.split())
+        if len(value) > _CAPTURE_VALUE_SNIPPET_CHARS:
+            value = value[:_CAPTURE_VALUE_SNIPPET_CHARS].rstrip() + "..."
+        lines.append(f"- {entry.key}: {value}")
+    return "\n".join(lines)
 
 
 def _parse_doc_extractions(raw: str) -> list[DocChunkExtraction]:
