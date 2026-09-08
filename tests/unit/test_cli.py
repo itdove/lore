@@ -1279,6 +1279,57 @@ def test_hook_no_subcommand(capsys):
     assert "Usage" in capsys.readouterr().err
 
 
+def test_hook_recall_uses_cursor_adapter_payload(store, capsys):
+    store.store(
+        _make_entry(
+            key="cursor:tests",
+            value="Run the focused test suite first",
+        )
+    )
+    payload = json.dumps(
+        {
+            "cursor_version": "1",
+            "hook_event_name": "beforeSubmitPrompt",
+            "message": "focused tests",
+        }
+    )
+
+    with mock.patch("sys.stdin", io.StringIO(payload)):
+        with mock.patch("lore.cli._is_lore_project", return_value=True):
+            with mock.patch("lore.cli._get_store", return_value=store):
+                with mock.patch(
+                    "lore.config.manager.get_project_config",
+                    return_value=mock.MagicMock(hierarchy=[]),
+                ):
+                    with mock.patch("lore.cli._maybe_trigger_auto_sync"):
+                        from lore.cli import _cmd_hook_recall
+
+                        rc = _cmd_hook_recall(argparse.Namespace(ide="cursor"))
+
+    assert rc == 0
+    assert "cursor:tests" in capsys.readouterr().out
+
+
+def test_hook_transcript_supports_camel_case_path(tmp_path):
+    transcript_path = tmp_path / "events.jsonl"
+    transcript_path.write_text("session transcript")
+    payload = json.dumps({"transcriptPath": str(transcript_path)})
+
+    from lore.cli import _extract_hook_transcript
+
+    assert _extract_hook_transcript(payload) == "session transcript"
+
+
+def test_setup_command_registers_selected_agent(tmp_path):
+    from lore.cli import _cmd_setup
+
+    with mock.patch.object(Path, "cwd", return_value=tmp_path):
+        rc = _cmd_setup(argparse.Namespace(ide="cursor", dry_run=False, force=False))
+
+    assert rc == 0
+    assert (tmp_path / ".cursor" / "hooks.json").exists()
+
+
 # =====================================================================
 # _parse_value edge cases
 # =====================================================================

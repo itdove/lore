@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from lore.config.models import IMPLICIT_LEVELS
+from lore.hook_adapters import SUPPORTED_IDES
 
 _RECALL_PREAMBLE = "IMPORTANT: The following team knowledge is relevant to this prompt."
 
@@ -444,7 +445,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
         _register_codex_hooks()
         print("  Hooks registered (.codex/hooks.json)")
-    else:
+    elif ide == "claude":
         _register_mcp()
         print("  MCP server registered (.mcp.json)")
 
@@ -456,6 +457,17 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
         _enable_mcp_server_trust()
         print("  MCP server trusted (~/.claude/settings.json)")
+    else:
+        _register_mcp()
+        print("  MCP server registered (.mcp.json)")
+
+        from lore.setup.hooks import setup_agent
+
+        success, message = setup_agent(ide, project_dir=Path.cwd())
+        if not success:
+            print(f"  {message}", file=sys.stderr)
+            return 1
+        print(f"  {message}")
 
     if hierarchy:
         print("\nRunning first sync...")
@@ -473,6 +485,21 @@ def _cmd_mcp_server(args: argparse.Namespace) -> int:
     server = create_server()
     server.run(transport="stdio")
     return 0
+
+
+def _cmd_setup(args: argparse.Namespace) -> int:
+    """Register Lore hooks for an already-initialized project."""
+
+    from lore.setup.hooks import setup_agent
+
+    success, message = setup_agent(
+        args.ide,
+        project_dir=Path.cwd(),
+        dry_run=getattr(args, "dry_run", False),
+        force=getattr(args, "force", False),
+    )
+    print(message, file=sys.stderr if not success else sys.stdout)
+    return 0 if success else 1
 
 
 def _cmd_sync_status(args: argparse.Namespace) -> int:
@@ -901,26 +928,64 @@ def _cmd_hook(args: argparse.Namespace) -> int:
         return 1
 
 
-def _extract_hook_transcript(payload: str) -> str:
-    """Extract transcript content from raw or Codex JSON hook input."""
+def _parse_hook_data(payload: str) -> dict | None:
     try:
         data = json.loads(payload)
     except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _normalize_hook_payload(
+    payload: str,
+    ide_type: str | None = None,
+):
+    """Parse and normalize a hook payload using the adapter registry."""
+
+    data = _parse_hook_data(payload)
+    if data is None:
+        return None
+
+    from lore.hook_adapters import detect_adapter
+
+    if ide_type and "_ide_type" not in data:
+        data = dict(data)
+        data["_ide_type"] = ide_type
+    adapter = detect_adapter(data, ide_type=ide_type)
+    return adapter.normalize(data)
+
+
+def _extract_hook_transcript(
+    payload: str,
+    ide_type: str | None = None,
+) -> str:
+    """Extract transcript content from any supported agent payload."""
+
+    data = _parse_hook_data(payload)
+    if data is None:
         return payload
 
-    if not isinstance(data, dict):
-        return payload
-
-    transcript_path = data.get("transcript_path")
-    if isinstance(transcript_path, str) and transcript_path:
+    normalized = _normalize_hook_payload(payload, ide_type=ide_type)
+    if normalized is not None and normalized.transcript_path:
+        path = Path(normalized.transcript_path).expanduser()
         try:
-            return Path(transcript_path).read_text(encoding="utf-8")
+            return path.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
             pass
 
     transcript = data.get("transcript")
-    if isinstance(transcript, str):
+    if isinstance(transcript, str) and not transcript.startswith(("/", "~")):
         return transcript
+
+    if normalized is not None:
+        from lore.hook_adapters import detect_adapter
+
+        adapter = detect_adapter(data, ide_type=ide_type)
+        for path_value in adapter.get_default_transcript_paths():
+            try:
+                return Path(path_value).expanduser().read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                continue
 
     return payload
 
@@ -965,16 +1030,15 @@ def _cmd_hook_recall(args: argparse.Namespace) -> int:
     if not payload.strip():
         return 0
 
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError:
+    normalized = _normalize_hook_payload(
+        payload,
+        ide_type=getattr(args, "ide", None),
+    )
+    if normalized is None:
         return 0
 
-    if not isinstance(data, dict):
-        return 0
-
-    prompt = data.get("user_message") or data.get("prompt", "")
-    if not isinstance(prompt, str) or not prompt:
+    prompt = normalized.prompt_text or ""
+    if not prompt:
         return 0
 
     if not _is_lore_project():
@@ -1054,7 +1118,10 @@ def _cmd_hook_capture(args: argparse.Namespace) -> int:
     if not _is_capture_enabled():
         return 0
 
-    transcript = _extract_hook_transcript(sys.stdin.read())
+    transcript = _extract_hook_transcript(
+        sys.stdin.read(),
+        ide_type=getattr(args, "ide", None),
+    )
     if not transcript.strip():
         return 0
 
@@ -1404,9 +1471,24 @@ def main(argv: list[str] | None = None) -> None:
     )
     init_parser.add_argument(
         "--ide",
-        choices=("claude", "codex"),
+        choices=SUPPORTED_IDES,
         default="claude",
         help="Agent integration to configure (default: claude)",
+    )
+    setup_parser = sub.add_parser(
+        "setup",
+        help="Register Lore hooks for an agent in the current project",
+    )
+    setup_parser.add_argument("--ide", choices=SUPPORTED_IDES, required=True)
+    setup_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show the setup target without writing files",
+    )
+    setup_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Rewrite Lore-managed setup files",
     )
     sub.add_parser("mcp-server", help="Start MCP server (stdio transport)")
 
@@ -1505,9 +1587,17 @@ def main(argv: list[str] | None = None) -> None:
 
     hook_parser = sub.add_parser("hook", help="Agent hook handlers")
     hook_sub = hook_parser.add_subparsers(dest="hook_command")
-    hook_sub.add_parser("recall", help="Recall context (UserPromptSubmit)")
-    hook_sub.add_parser("nudge", help="Mid-session nudge (PostToolUse)")
-    hook_sub.add_parser("capture", help="Capture knowledge (SessionEnd)")
+    for hook_name, hook_help in (
+        ("recall", "Recall context (prompt/session start)"),
+        ("nudge", "Mid-session nudge (after tool)"),
+        ("capture", "Capture knowledge (session end)"),
+    ):
+        hook_command_parser = hook_sub.add_parser(hook_name, help=hook_help)
+        hook_command_parser.add_argument(
+            "--ide",
+            choices=SUPPORTED_IDES,
+            help="Explicit agent type when payloads overlap",
+        )
 
     ingest_parser = sub.add_parser("ingest", help="Ingest knowledge from sources")
     ingest_source = ingest_parser.add_mutually_exclusive_group()
@@ -1542,6 +1632,7 @@ def main(argv: list[str] | None = None) -> None:
 
     handlers = {
         "init": _cmd_init,
+        "setup": _cmd_setup,
         "mcp-server": _cmd_mcp_server,
         "sync": _cmd_sync,
         "search": _cmd_search,
