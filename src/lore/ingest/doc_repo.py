@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from lore.ingest.chunker import SUPPORTED_EXTENSIONS
@@ -9,6 +10,7 @@ from lore.llm.base import LLMProvider
 from lore.sync.parser import ParsedFile, compute_content_hash
 
 log = logging.getLogger("lore.ingest")
+DEFAULT_MAX_WORKERS = 4
 
 
 class DocRepoIngester:
@@ -17,10 +19,15 @@ class DocRepoIngester:
         provider: LLMProvider,
         doc_paths: list[str] | None = None,
         exclude_paths: list[str] | None = None,
+        max_workers: int = DEFAULT_MAX_WORKERS,
     ) -> None:
+        if max_workers < 1:
+            raise ValueError("max_workers must be at least 1")
+
         self._provider = provider
         self._doc_paths = doc_paths
         self._exclude_paths = exclude_paths or []
+        self._max_workers = max_workers
 
     def scan_files(self, repo_path: Path) -> list[Path]:
         candidates: list[Path] = []
@@ -89,11 +96,21 @@ class DocRepoIngester:
         return parsed_files
 
     def scan_and_process(self, repo_path: Path) -> list[ParsedFile]:
-        files = self.scan_files(repo_path)
+        files = sorted(
+            self.scan_files(repo_path),
+            key=lambda path: path.relative_to(repo_path).as_posix(),
+        )
         result: list[ParsedFile] = []
-        for f in files:
-            try:
-                result.extend(self.process_file(f, repo_path))
-            except Exception:
-                log.warning("Failed to process %s", f, exc_info=True)
+
+        with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
+            futures = [
+                (file_path, executor.submit(self.process_file, file_path, repo_path))
+                for file_path in files
+            ]
+            for file_path, future in futures:
+                try:
+                    result.extend(future.result())
+                except Exception:
+                    log.warning("Failed to process %s", file_path, exc_info=True)
+
         return result

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from lore.ingest.doc_repo import DocRepoIngester
@@ -214,17 +215,74 @@ def test_scan_and_process_end_to_end(tmp_path):
     assert "docs/ref.md" in file_paths
 
 
+def test_scan_and_process_is_parallel_and_deterministic(tmp_path):
+    for name in ("c.md", "a.md", "b.md"):
+        _write_doc(tmp_path / name)
+
+    barrier = threading.Barrier(2)
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    class _ConcurrentProvider(_MockProvider):
+        def extract_from_chunk(self, chunk_text, heading, source_file):
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            try:
+                if Path(source_file).name in {"a.md", "b.md"}:
+                    barrier.wait(timeout=2)
+                return [DocChunkExtraction(key="guide:entry", summary="Entry.")]
+            finally:
+                with lock:
+                    active -= 1
+
+    ingester = DocRepoIngester(
+        _ConcurrentProvider(),
+        doc_paths=["c.md", "a.md", "b.md"],
+        max_workers=2,
+    )
+    result = ingester.scan_and_process(tmp_path)
+
+    assert max_active >= 2
+    assert [parsed.file_path for parsed in result] == ["a.md", "b.md", "c.md"]
+
+
+def test_scan_and_process_continues_after_file_failure(tmp_path, monkeypatch):
+    _write_doc(tmp_path / "bad.md")
+    _write_doc(tmp_path / "good.md")
+    ingester = DocRepoIngester(_MockProvider(), max_workers=2)
+
+    def process_file(file_path, repo_path):
+        if file_path.name == "bad.md":
+            raise RuntimeError("failed file")
+        return [
+            ParsedFile(
+                key="guide:good",
+                value="Good.",
+                tags=None,
+                locked=False,
+                created_by=None,
+                projects=None,
+                content_hash="sha256:test",
+                file_path=file_path.relative_to(repo_path).as_posix(),
+            )
+        ]
+
+    monkeypatch.setattr(ingester, "process_file", process_file)
+
+    result = ingester.scan_and_process(tmp_path)
+
+    assert [parsed.file_path for parsed in result] == ["good.md"]
+
+
 def test_scan_and_process_handles_errors(tmp_path):
     _write_doc(tmp_path / "good.md")
 
     class _FailProvider(_MockProvider):
-        def __init__(self):
-            super().__init__()
-            self._calls = 0
-
         def extract_from_chunk(self, chunk_text, heading, source_file):
-            self._calls += 1
-            if self._calls == 1:
+            if Path(source_file).name == "good.md":
                 raise RuntimeError("LLM error")
             return [DocChunkExtraction(key="guide:ok", summary="OK.")]
 
