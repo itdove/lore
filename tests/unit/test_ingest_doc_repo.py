@@ -125,6 +125,40 @@ def test_process_file_returns_parsed_files(tmp_path):
     assert result[0].locked is False
 
 
+def test_process_file_reads_file_once(tmp_path, monkeypatch):
+    doc = _write_doc(tmp_path / "guide.md")
+    extractions = [
+        DocChunkExtraction(
+            key="guide:test:intro",
+            summary="Test content.",
+        )
+    ]
+    ingester = DocRepoIngester(_MockProvider(extractions))
+
+    original_read_bytes = Path.read_bytes
+    original_read_text = Path.read_text
+    read_bytes_count = 0
+
+    def count_read_bytes(path, *args, **kwargs):
+        nonlocal read_bytes_count
+        if path == doc:
+            read_bytes_count += 1
+        return original_read_bytes(path, *args, **kwargs)
+
+    def fail_read_text(path, *args, **kwargs):
+        if path == doc:
+            raise AssertionError("process_file should pass decoded text to chunker")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", count_read_bytes)
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    result = ingester.process_file(doc, tmp_path)
+
+    assert len(result) == 1
+    assert read_bytes_count == 1
+
+
 def test_process_file_multiple_extractions(tmp_path):
     doc = _write_doc(tmp_path / "multi.md")
     extractions = [

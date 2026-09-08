@@ -66,10 +66,13 @@ class DocRepoIngester:
     ) -> list[ParsedFile]:
         raw = file_path.read_bytes()
         content_hash = compute_content_hash(raw)
+        text = raw.decode("utf-8", errors="replace")
         rel = file_path.relative_to(repo_path).as_posix()
 
         parsed_files: list[ParsedFile] = []
-        for ext, tags, _chunk in extract_doc_chunks(self._provider, file_path):
+        for ext, tags, _chunk in extract_doc_chunks(
+            self._provider, file_path, text=text
+        ):
             parsed_files.append(
                 ParsedFile(
                     key=ext.key,

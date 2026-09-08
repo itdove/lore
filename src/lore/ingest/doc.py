@@ -14,9 +14,9 @@ from lore.store.base import KnowledgeEntry, StoreBackend, validate_key
 log = logging.getLogger("lore.ingest")
 
 
-def extract_doc_chunks(provider: LLMProvider, file_path: Path):
+def extract_doc_chunks(provider: LLMProvider, file_path: Path, text: str | None = None):
     """Chunk file, LLM extract, validate keys. Yields (ext, tags, chunk)."""
-    chunks = chunk_document(file_path)
+    chunks = chunk_document(file_path, text=text)
     for chunk in chunks:
         extractions = provider.extract_from_chunk(
             chunk.text, chunk.heading, chunk.source_file

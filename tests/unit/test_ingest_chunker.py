@@ -176,6 +176,16 @@ def test_chunk_document_end_to_end(tmp_path):
     assert chunks[0].word_count > 0
 
 
+def test_chunk_document_uses_supplied_text(tmp_path):
+    doc = tmp_path / "not-on-disk.md"
+    text = "# Supplied content\n" + "word " * 100
+
+    chunks = chunk_document(doc, text=text)
+
+    assert chunks[0].heading == "Supplied content"
+    assert chunks[0].text.startswith("word")
+
+
 def test_chunk_document_empty_file(tmp_path):
     doc = tmp_path / "empty.md"
     doc.write_text("")
