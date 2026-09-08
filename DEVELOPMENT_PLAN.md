@@ -263,6 +263,11 @@ Why: compliance requirement from security audit Q2 2026.
 - `lore init` registers MCP server in project-level `.mcp.json` (not global `~/.claude.json`)
 - Only projects with `lore init` get hooks and MCP — clean per-project opt-in
 
+*OpenAI Codex setup:*
+- `lore init --ide codex` registers MCP in project-level `.codex/config.toml`
+- `lore init --ide codex` registers `UserPromptSubmit`, `PostToolUse`, and `SessionEnd` in `.codex/hooks.json`
+- Codex prompt and session-end payloads are normalized by the existing Lore hook handlers
+
 *PR-based review:*
 - Session-end capture creates PRs in appropriate knowledge repo
 - Level maintainer reviews via normal git diff

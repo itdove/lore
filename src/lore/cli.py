@@ -230,16 +230,83 @@ def _register_mcp() -> None:
     _write_json_file(mcp_json, data)
 
 
-def _has_hook_command(matchers: list[dict], command: str) -> bool:
-    return any(
-        h.get("command") == command for m in matchers for h in m.get("hooks", [])
+def _toml_section_name(line: str) -> str | None:
+    """Return a normalized TOML table name for a table header line."""
+    stripped = line.strip()
+    if not (stripped.startswith("[") and stripped.endswith("]")):
+        return None
+    return stripped[1:-1].replace('"', "").replace(" ", "")
+
+
+def _register_codex_mcp() -> None:
+    """Register Lore's MCP server in the current project's Codex config."""
+    config_path = Path.cwd() / ".codex" / "config.toml"
+    existing = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+
+    sections = [_toml_section_name(line) for line in existing.splitlines()]
+    if "mcp_servers.lore" in sections:
+        return
+
+    binary = shutil.which("lore")
+    if not binary:
+        print("  WARNING: 'lore' not found on PATH, using 'lore' as command")
+        binary = "lore"
+
+    block = (
+        "[mcp_servers.lore]\n"
+        f"command = {json.dumps(binary)}\n"
+        f"args = {json.dumps(['mcp-server'])}\n"
     )
+
+    lines = existing.splitlines(keepends=True)
+    child_index = next(
+        (
+            index
+            for index, section in enumerate(sections)
+            if section and section.startswith("mcp_servers.lore.")
+        ),
+        None,
+    )
+    if child_index is not None:
+        lines.insert(child_index, block)
+        updated = "".join(lines)
+    else:
+        separator = "" if not existing or existing.endswith("\n") else "\n"
+        updated = existing + separator + ("\n" if existing else "") + block
+
+    _write_text_file(config_path, updated)
+
+
+def _write_text_file(path: Path, content: str) -> None:
+    """Write a text file, creating its parent directory when necessary."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def _has_hook_command(matchers: list[dict], command: str) -> bool:
+    for matcher in matchers:
+        if not isinstance(matcher, dict):
+            continue
+        handlers = matcher.get("hooks")
+        if isinstance(handlers, list):
+            if any(
+                isinstance(handler, dict) and handler.get("command") == command
+                for handler in handlers
+            ):
+                return True
+        elif matcher.get("command") == command:
+            # Accept the legacy flat hook shape when checking existing files.
+            return True
+    return False
 
 
 def _register_hooks() -> None:
     settings_path = Path.cwd() / ".claude" / "settings.json"
     data = _load_json_file(settings_path)
     hooks = data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        hooks = {}
+        data["hooks"] = hooks
 
     changed = False
 
@@ -251,6 +318,8 @@ def _register_hooks() -> None:
 
     for event, command in desired.items():
         matchers = hooks.get(event, [])
+        if not isinstance(matchers, list):
+            matchers = []
         if _has_hook_command(matchers, command):
             continue
         matchers.append(
@@ -261,6 +330,41 @@ def _register_hooks() -> None:
 
     if changed:
         _write_json_file(settings_path, data)
+
+
+def _register_codex_hooks() -> None:
+    """Register Lore hooks in the current project's Codex hook file."""
+    hooks_path = Path.cwd() / ".codex" / "hooks.json"
+    data = _load_json_file(hooks_path)
+    hooks = data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        hooks = {}
+        data["hooks"] = hooks
+
+    desired = {
+        "UserPromptSubmit": {
+            "hooks": [{"type": "command", "command": "lore hook recall"}]
+        },
+        "PostToolUse": {
+            "matcher": ".*",
+            "hooks": [{"type": "command", "command": "lore hook nudge"}],
+        },
+        "SessionEnd": {"hooks": [{"type": "command", "command": "lore hook capture"}]},
+    }
+
+    changed = False
+    for event, matcher in desired.items():
+        matchers = hooks.get(event, [])
+        if not isinstance(matchers, list):
+            matchers = []
+        command = matcher["hooks"][0]["command"]
+        if not _has_hook_command(matchers, command):
+            matchers.append(matcher)
+            hooks[event] = matchers
+            changed = True
+
+    if changed:
+        _write_json_file(hooks_path, data)
 
 
 def _enable_mcp_server_trust() -> None:
@@ -333,17 +437,25 @@ def _cmd_init(args: argparse.Namespace) -> int:
     global_cfg = _register_project(global_cfg)
     print("  Project registered")
 
-    _register_mcp()
-    print("  MCP server registered (.mcp.json)")
+    ide = getattr(args, "ide", "claude")
+    if ide == "codex":
+        _register_codex_mcp()
+        print("  MCP server registered (.codex/config.toml)")
 
-    _register_hooks()
-    print("  Hooks registered (.claude/settings.json)")
+        _register_codex_hooks()
+        print("  Hooks registered (.codex/hooks.json)")
+    else:
+        _register_mcp()
+        print("  MCP server registered (.mcp.json)")
 
-    _allow_mcp_tools()
-    print("  MCP tool permissions added (.claude/settings.json)")
+        _register_hooks()
+        print("  Hooks registered (.claude/settings.json)")
 
-    _enable_mcp_server_trust()
-    print("  MCP server trusted (~/.claude/settings.json)")
+        _allow_mcp_tools()
+        print("  MCP tool permissions added (.claude/settings.json)")
+
+        _enable_mcp_server_trust()
+        print("  MCP server trusted (~/.claude/settings.json)")
 
     if hierarchy:
         print("\nRunning first sync...")
@@ -789,6 +901,30 @@ def _cmd_hook(args: argparse.Namespace) -> int:
         return 1
 
 
+def _extract_hook_transcript(payload: str) -> str:
+    """Extract transcript content from raw or Codex JSON hook input."""
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return payload
+
+    if not isinstance(data, dict):
+        return payload
+
+    transcript_path = data.get("transcript_path")
+    if isinstance(transcript_path, str) and transcript_path:
+        try:
+            return Path(transcript_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            pass
+
+    transcript = data.get("transcript")
+    if isinstance(transcript, str):
+        return transcript
+
+    return payload
+
+
 def _maybe_trigger_auto_sync() -> None:
     import subprocess
 
@@ -834,8 +970,11 @@ def _cmd_hook_recall(args: argparse.Namespace) -> int:
     except json.JSONDecodeError:
         return 0
 
-    prompt = data.get("user_message", "")
-    if not prompt:
+    if not isinstance(data, dict):
+        return 0
+
+    prompt = data.get("user_message") or data.get("prompt", "")
+    if not isinstance(prompt, str) or not prompt:
         return 0
 
     if not _is_lore_project():
@@ -915,7 +1054,7 @@ def _cmd_hook_capture(args: argparse.Namespace) -> int:
     if not _is_capture_enabled():
         return 0
 
-    transcript = sys.stdin.read()
+    transcript = _extract_hook_transcript(sys.stdin.read())
     if not transcript.strip():
         return 0
 
@@ -1263,6 +1402,12 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip hierarchy level prompts (add later with lore config add-level)",
     )
+    init_parser.add_argument(
+        "--ide",
+        choices=("claude", "codex"),
+        default="claude",
+        help="Agent integration to configure (default: claude)",
+    )
     sub.add_parser("mcp-server", help="Start MCP server (stdio transport)")
 
     sync_parser = sub.add_parser("sync", help="Sync knowledge repos")
@@ -1358,7 +1503,7 @@ def main(argv: list[str] | None = None) -> None:
         "--host", default="127.0.0.1", help="Host (default: 127.0.0.1)"
     )
 
-    hook_parser = sub.add_parser("hook", help="Claude Code hook handlers")
+    hook_parser = sub.add_parser("hook", help="Agent hook handlers")
     hook_sub = hook_parser.add_subparsers(dest="hook_command")
     hook_sub.add_parser("recall", help="Recall context (UserPromptSubmit)")
     hook_sub.add_parser("nudge", help="Mid-session nudge (PostToolUse)")

@@ -251,6 +251,54 @@ def test_init_mcp_merges_existing(tmp_path):
     assert "other" in data["mcpServers"]
 
 
+def test_init_codex_registers_project_setup(tmp_path):
+    project_dir = tmp_path / "myproject"
+    project_dir.mkdir()
+
+    with mock.patch("lore.cli.input", side_effect=["0", "none"]):
+        with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
+            with mock.patch.object(Path, "cwd", return_value=project_dir):
+                from lore.cli import _cmd_init
+
+                rc = _cmd_init(argparse.Namespace(ide="codex"))
+
+    assert rc == 0
+    assert not (project_dir / ".mcp.json").exists()
+
+    codex_config = project_dir / ".codex" / "config.toml"
+    config_text = codex_config.read_text()
+    assert "[mcp_servers.lore]" in config_text
+    assert 'command = "/usr/local/bin/lore"' in config_text
+    assert 'args = ["mcp-server"]' in config_text
+
+    hooks = json.loads((project_dir / ".codex" / "hooks.json").read_text())
+    assert _has_hook_command(hooks["hooks"]["UserPromptSubmit"], "lore hook recall")
+    assert _has_hook_command(hooks["hooks"]["PostToolUse"], "lore hook nudge")
+    assert _has_hook_command(hooks["hooks"]["SessionEnd"], "lore hook capture")
+    assert hooks["hooks"]["PostToolUse"][0]["matcher"] == ".*"
+
+
+def test_register_codex_mcp_preserves_existing_and_is_idempotent(tmp_path):
+    project_dir = tmp_path / "myproject"
+    project_dir.mkdir()
+    codex_dir = project_dir / ".codex"
+    codex_dir.mkdir()
+    config_path = codex_dir / "config.toml"
+    config_path.write_text('[mcp_servers.other]\ncommand = "other"\n')
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        with mock.patch("shutil.which", return_value="/usr/local/bin/lore"):
+            from lore.cli import _register_codex_mcp
+
+            _register_codex_mcp()
+            first = config_path.read_text()
+            _register_codex_mcp()
+
+    assert config_path.read_text() == first
+    assert "[mcp_servers.other]" in first
+    assert "[mcp_servers.lore]" in first
+
+
 # =====================================================================
 # lore search
 # =====================================================================
@@ -919,6 +967,56 @@ def test_init_hooks_merges_existing(tmp_path):
     assert _has_hook_command(data["hooks"]["UserPromptSubmit"], "lore hook recall")
 
 
+def test_init_codex_hooks_merge_existing(tmp_path):
+    project_dir = tmp_path / "myproject"
+    codex_dir = project_dir / ".codex"
+    codex_dir.mkdir(parents=True)
+    (codex_dir / "hooks.json").write_text(
+        json.dumps(
+            {
+                "description": "Keep this",
+                "hooks": {
+                    "PostToolUse": [
+                        {
+                            "matcher": "Bash",
+                            "hooks": [{"type": "command", "command": "other-tool"}],
+                        }
+                    ]
+                },
+            }
+        )
+    )
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        from lore.cli import _register_codex_hooks
+
+        _register_codex_hooks()
+
+    data = json.loads((codex_dir / "hooks.json").read_text())
+    assert data["description"] == "Keep this"
+    post_tool = data["hooks"]["PostToolUse"]
+    assert post_tool[0]["matcher"] == "Bash"
+    assert _has_hook_command(post_tool, "other-tool")
+    assert _has_hook_command(post_tool, "lore hook nudge")
+    assert _has_hook_command(data["hooks"]["UserPromptSubmit"], "lore hook recall")
+
+
+def test_init_codex_hooks_idempotent(tmp_path):
+    project_dir = tmp_path / "myproject"
+    project_dir.mkdir()
+
+    with mock.patch.object(Path, "cwd", return_value=project_dir):
+        from lore.cli import _register_codex_hooks
+
+        _register_codex_hooks()
+        _register_codex_hooks()
+
+    data = json.loads((project_dir / ".codex" / "hooks.json").read_text())
+    assert len(data["hooks"]["UserPromptSubmit"]) == 1
+    assert len(data["hooks"]["PostToolUse"]) == 1
+    assert len(data["hooks"]["SessionEnd"]) == 1
+
+
 # =====================================================================
 # MCP server trust + tool permissions
 # =====================================================================
@@ -1038,6 +1136,36 @@ def test_hook_recall_outputs_context(store, capsys):
     assert "conv:naming" in out
     assert "snake_case" in out
     assert "<lore-context>" in out
+
+
+def test_hook_recall_accepts_codex_prompt(store, capsys):
+    store.store(_make_entry(key="codex:prompt", value="Codex prompt context"))
+
+    payload = json.dumps({"prompt": "Codex prompt"})
+    with mock.patch("sys.stdin", io.StringIO(payload)):
+        with mock.patch("lore.cli._is_lore_project", return_value=True):
+            with mock.patch("lore.cli._get_store", return_value=store):
+                with mock.patch(
+                    "lore.config.manager.get_project_config",
+                    return_value=mock.MagicMock(hierarchy=[]),
+                ):
+                    with mock.patch("lore.cli._maybe_trigger_auto_sync"):
+                        from lore.cli import _cmd_hook_recall
+
+                        rc = _cmd_hook_recall(argparse.Namespace())
+
+    assert rc == 0
+    assert "codex:prompt" in capsys.readouterr().out
+
+
+def test_extract_hook_transcript_from_codex_payload(tmp_path):
+    transcript_path = tmp_path / "rollout.jsonl"
+    transcript_path.write_text('{"type": "message"}\n')
+
+    from lore.cli import _extract_hook_transcript
+
+    payload = json.dumps({"transcript_path": str(transcript_path)})
+    assert _extract_hook_transcript(payload) == '{"type": "message"}\n'
 
 
 def test_hook_recall_empty_stdin(capsys):

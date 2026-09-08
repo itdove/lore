@@ -81,13 +81,22 @@ cd /path/to/your/project
 lore init
 ```
 
-`lore init` walks you through setup:
+`lore init` walks you through setup (Claude Code is the default integration):
 1. Creates XDG directories and global config
 2. Prompts for shared hierarchy levels (repo URLs + branches), or reuse an existing project's hierarchy
 3. Creates `.lore/config.json` in your project
 4. Sets up the SQLite database
-5. Registers the MCP server (`.mcp.json` + `.claude/settings.json`)
+5. Registers the MCP server and lifecycle hooks for the selected agent
 6. Runs the first sync
+
+For OpenAI Codex, use the Codex-specific project configuration:
+
+```bash
+lore init --ide codex
+```
+
+This registers the MCP server in `.codex/config.toml` and Lore hooks in
+`.codex/hooks.json`.
 
 ### CLI Commands
 
@@ -116,7 +125,7 @@ lore config set --global <key> <value>  # Set in global config
 lore config edit              # Open project config in $EDITOR
 lore config edit --global     # Open global config in $EDITOR
 
-# Claude Code hook handlers
+# Agent hook handlers (Claude Code or Codex)
 lore hook recall               # Recall context (UserPromptSubmit)
 lore hook nudge                # Mid-session nudge (PostToolUse)
 lore hook capture              # Capture knowledge (SessionEnd)
