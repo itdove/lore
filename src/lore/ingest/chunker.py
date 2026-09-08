@@ -228,9 +228,14 @@ _SPLITTERS = {
 
 
 def chunk_document(
-    file_path: Path, *, min_words: int = 100, max_words: int = 1000
+    file_path: Path,
+    *,
+    text: str | None = None,
+    min_words: int = 100,
+    max_words: int = 1000,
 ) -> list[DocumentChunk]:
-    text = file_path.read_text(encoding="utf-8", errors="replace")
+    if text is None:
+        text = file_path.read_text(encoding="utf-8", errors="replace")
     _, body = _strip_frontmatter(text)
 
     if not body.strip():
