@@ -13,7 +13,7 @@ GIT REPOS (levels 1-N, admin-defined)       LOCAL (per developer)
 ─────────────────────────────────────       ────────────────────
 
 level N repo@branch ──── PR ────┐
-level 2 repo@branch ──── PR ────┤           FastMCP Server (stdio)
+level 2 repo@branch ──── PR ────┤           MCPServer (stdio)
 level 1 repo@branch ──── PR ────┤           ├── SQLite DB (all entries, all projects)
                                 │           ├── LLM (Ollama local or remote)
 level 0 (individual) ───────────┘           └── periodic git pull + reindex
@@ -219,7 +219,7 @@ Why: compliance requirement from security audit Q2 2026.
 **Scope:**
 
 *MCP server:*
-- FastMCP server with bundled `LORE.md` injected via `instructions=`
+- MCPServer with bundled `LORE.md` injected via `instructions=`
 - Local SQLite with FTS5 (`$XDG_DATA_HOME/lore/knowledge.db`)
 - Global config: `$XDG_CONFIG_HOME/lore/config.json` (project registry + provider settings)
 - Project config: `.lore/config.json` (hierarchy for this project, committed to repo)
@@ -538,7 +538,7 @@ Migration moves files between repos + updates DB entries. Interactive mapping wh
 
 | Pattern | ai-guardian source | Lore usage |
 |---------|-------------------|------------|
-| FastMCP server | `mcp/server.py:44-147` — `create_server()` + `@server.tool()` | Same decorator pattern, swap tool functions |
+| MCPServer | `mcp/server.py:44-147` — `create_server()` + `@server.tool()` | Same decorator pattern, swap tool functions |
 | Skill instructions | `skills/ai-guardian-security/SKILL.md` loaded via `instructions=` | `.lore/LORE.md` loaded same way |
 | Hook adapter ABC | `hook_adapters/base.py:40-101` — `HookAdapter` + `NormalizedHookInput` + `can_handle()` | Same ABC for all agents |
 | Hook registration | `setup/hooks.py:23-96` — `IDESetup` + `HookEvent` enum + `IDE_CONFIGS` dict | `lore setup --ide <agent>` |
@@ -554,9 +554,9 @@ Migration moves files between repos + updates DB entries. Interactive mapping wh
 
 ### Key ai-guardian Patterns to Follow
 
-**FastMCP tool registration** (`mcp/server.py`):
+**MCPServer tool registration** (`mcp/server.py`):
 ```python
-server = FastMCP("lore", instructions=_load_lore_instructions())
+server = MCPServer("lore", instructions=_load_lore_instructions())
 
 @server.tool()
 def query_knowledge(topic: str, level: str = None) -> dict:
@@ -617,7 +617,7 @@ src/lore/
 │   └── ollama.py                  # Ollama synthesis + capture (new)
 ├── mcp/
 │   ├── __init__.py
-│   ├── server.py                  # FastMCP + @server.tool() (adapted)
+│   ├── server.py                  # MCPServer + @server.tool() (adapted)
 │   └── skills/
 │       └── LORE.md                # instructions= content
 ├── store/
@@ -666,7 +666,7 @@ tests/
 |-------|-------|--------|
 | #2 | Config loading with XDG paths + project override | ✅ |
 | #3 | SQLite schema + FTS5 (knowledge + knowledge_history) | ✅ |
-| #4 | FastMCP server with instructions= from LORE.md | ✅ |
+| #4 | MCPServer with instructions= from LORE.md | ✅ |
 | #5 | query_knowledge + list_knowledge MCP tools | ✅ |
 | #6 | Git repo sync: pull, parse markdown frontmatter, index to SQLite | ✅ |
 | #7 | lore init + lore sync + lore search CLI | ✅ |
@@ -699,7 +699,7 @@ tests/
 |-------|-------|-------|--------|
 | #2 | MVP Sprint 1 | Config loading with XDG paths + project override | ✅ |
 | #3 | MVP Sprint 1 | SQLite schema + FTS5 | ✅ |
-| #4 | MVP Sprint 1 | FastMCP server with instructions= from LORE.md | ✅ |
+| #4 | MVP Sprint 1 | MCPServer with instructions= from LORE.md | ✅ |
 | #5 | MVP Sprint 1 | query_knowledge + list_knowledge MCP tools | ✅ |
 | #6 | MVP Sprint 1 | Git repo sync: pull, parse, index | ✅ |
 | #7 | MVP Sprint 1 | lore init + lore sync + lore search CLI | ✅ |

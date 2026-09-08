@@ -4,7 +4,7 @@ import importlib.resources
 import logging
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from lore.config.manager import get_global_config, get_project_config
 from lore.config.models import (
@@ -187,8 +187,8 @@ def _assert_writable(level_name: str, writable: bool) -> None:
         )
 
 
-def create_server() -> FastMCP:
-    server = FastMCP("lore", instructions=_load_lore_instructions())
+def create_server() -> MCPServer:
+    server = MCPServer("lore", instructions=_load_lore_instructions())
 
     @server.tool()
     def query_knowledge(
