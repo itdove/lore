@@ -170,6 +170,38 @@ def test_extract_knowledge_malformed_json(monkeypatch):
     assert result == []
 
 
+def test_extract_knowledge_formats_snippets_and_keys_only(monkeypatch):
+    prompt = {}
+    p = OllamaProvider(model="phi4-mini")
+    long_value = "line one\n" + ("x" * 300)
+
+    def generate(capture_prompt):
+        prompt["value"] = capture_prompt
+        return "[]"
+
+    monkeypatch.setattr(p, "_generate", generate)
+    p.extract_knowledge(
+        "transcript",
+        [
+            _make_entry(key="relevant:key", value=long_value),
+            _make_entry(key="key:only", value=""),
+        ],
+    )
+
+    existing_text = (
+        prompt["value"]
+        .split("Existing knowledge:\n", 1)[1]
+        .split(
+            "\n\nSession transcript:",
+            1,
+        )[0]
+    )
+    assert "- relevant:key: line one" in existing_text
+    assert "- key:only" in existing_text
+    assert "- key:only:" not in existing_text
+    assert "x" * 241 not in existing_text
+
+
 # =====================================================================
 # _parse_candidates unit tests
 # =====================================================================
