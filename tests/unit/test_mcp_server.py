@@ -36,12 +36,12 @@ class TestLoadLoreInstructions:
 
 
 class TestCreateServer:
-    def test_returns_fastmcp_instance(self, tmp_path, monkeypatch):
+    def test_returns_mcpserver_instance(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        from mcp.server.fastmcp import FastMCP
+        from mcp.server.mcpserver import MCPServer
 
         server = create_server()
-        assert isinstance(server, FastMCP)
+        assert isinstance(server, MCPServer)
         assert server.name == "lore"
 
     def test_server_has_instructions(self, tmp_path, monkeypatch):

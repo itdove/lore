@@ -45,7 +45,7 @@ GIT REPOS (levels 1-N)                      LOCAL (per developer)
 ──────────────────────                      ────────────────────
 
 level N repo@branch ──── PR ────┐
-level 2 repo@branch ──── PR ────┤           FastMCP Server (stdio)
+level 2 repo@branch ──── PR ────┤           MCPServer (stdio)
 level 1 repo@branch ──── PR ────┤           ├── SQLite DB (all projects)
                                 │           ├── LLM (Ollama local or remote)
 level 0 (individual) ───────────┘           └── auto-sync via hook + staleness
@@ -80,6 +80,9 @@ pip install -e ".[dev]"
 cd /path/to/your/project
 lore init
 ```
+
+Lore targets the MCP Python SDK 2.x (`mcp[cli]>=2.0,<3.0`) and exposes its
+tools through the SDK's `MCPServer` over stdio.
 
 `lore init` walks you through setup (Claude Code is the default integration):
 1. Creates XDG directories and global config
@@ -192,7 +195,7 @@ python -m pytest tests/ -v
 **MVP Sprint 1 — Core:**
 - Config loading with XDG paths and project hierarchy ([#2](https://github.com/itdove/lore/issues/2))
 - SQLite schema with FTS5 full-text search ([#3](https://github.com/itdove/lore/issues/3))
-- FastMCP server with bundled LORE.md instructions ([#4](https://github.com/itdove/lore/issues/4))
+- MCPServer with bundled LORE.md instructions ([#4](https://github.com/itdove/lore/issues/4))
 - MCP tool handlers: query, list, conflicts, health ([#5](https://github.com/itdove/lore/issues/5))
 - Git repo sync engine: clone/pull, parse markdown frontmatter, index to SQLite ([#6](https://github.com/itdove/lore/issues/6))
 - CLI: init, sync, search, conflicts, mcp-server ([#7](https://github.com/itdove/lore/issues/7))

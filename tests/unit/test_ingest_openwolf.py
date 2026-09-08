@@ -59,7 +59,7 @@ def test_extract_preferences(tmp_path):
 def test_extract_learnings(tmp_path):
     _write_cerebrum(
         tmp_path / ".wolf",
-        "## Key Learnings\n\n- **Project:** uses FastMCP for tools\n",
+        "## Key Learnings\n\n- **Project:** uses MCPServer for tools\n",
     )
     ing = OpenWolfIngester(_make_store(), tmp_path)
     entries = ing.extract_delta()
