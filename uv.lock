@@ -988,7 +988,7 @@ dev = [
 requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=26,<27" },
     { name = "mcp", extras = ["cli"], specifier = ">=2.0,<3.0" },
-    { name = "nicegui", specifier = ">=2.0,<3.0" },
+    { name = "nicegui", specifier = "==3.16.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "pyyaml", specifier = ">=6.0" },
@@ -1305,7 +1305,7 @@ wheels = [
 
 [[package]]
 name = "nicegui"
-version = "2.24.2"
+version = "3.16.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -1315,24 +1315,27 @@ dependencies = [
     { name = "fastapi" },
     { name = "h11" },
     { name = "httpx" },
+    { name = "idna" },
     { name = "ifaddr" },
     { name = "itsdangerous" },
     { name = "jinja2" },
     { name = "markdown2" },
-    { name = "orjson", marker = "platform_machine != 'i386' and platform_machine != 'i686'" },
+    { name = "orjson", marker = "platform_machine != 'i386' and platform_machine != 'i686' and platform_python_implementation != 'PyPy'" },
+    { name = "pydantic-core" },
     { name = "pygments" },
+    { name = "python-dotenv" },
     { name = "python-engineio" },
     { name = "python-multipart" },
     { name = "python-socketio", extra = ["asyncio-client"] },
     { name = "starlette" },
+    { name = "tinycss2" },
     { name = "typing-extensions" },
     { name = "uvicorn", extra = ["standard"] },
-    { name = "vbuild" },
     { name = "watchfiles" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e9/fc/ddb6265ae6979a4a0b251dcea5d2a5f582883cb63a3f81cafb8c04c9a090/nicegui-2.24.2.tar.gz", hash = "sha256:21e7620c99aeeb535665e81e45ef2f9eeda95f6a9e35cee542414a10bbe61b77", size = 13109064, upload-time = "2025-09-23T13:45:58.243Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/df/09/c610d775f9a28c9d2962f185ff592376bace368b5ef0fe0b91f1205f3a26/nicegui-3.16.0.tar.gz", hash = "sha256:602c9c67b5063d14c47f88fd025b82a4e797e9a9b233113f6bbabbc6cdf196a2", size = 19886000, upload-time = "2026-08-12T15:18:32.543Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/52/c1/6a49602d7c33ab8286654a3d64c83d5d2534d4b90d256eaed92c3fefc7f4/nicegui-2.24.2-py3-none-any.whl", hash = "sha256:9b810fe75f3dd1ff926e3d96d71e25031387fe5b7a21d32159a32611b8023423", size = 13496524, upload-time = "2025-09-23T13:45:55.437Z" },
+    { url = "https://files.pythonhosted.org/packages/16/da/2234c7c9c42caac9e20c61704461c4020bd350c618896e148d147f0e15ee/nicegui-3.16.0-py3-none-any.whl", hash = "sha256:5cff8b534e58404b8228d0ef9e41fc610d106bb146844de09abbfc1f24fb5163", size = 8588168, upload-time = "2026-08-12T15:18:28.781Z" },
 ]
 
 [[package]]
@@ -1581,15 +1584,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/88/fb/46dad6c0ae49ed230ab1b16c890c2b6314e2403e6c412976f4a72d64a527/propcache-0.5.2-cp314-cp314t-win_amd64.whl", hash = "sha256:d447bb0b3054be5818458fbb171208b1d9ff11eba14e18ca18b90cbb45767370", size = 47764, upload-time = "2026-05-08T21:02:07.353Z" },
     { url = "https://files.pythonhosted.org/packages/e7/c4/a47d0a63aa309d10d59ede6e9d4cff03a344a79d1f0f4cd0cd74997b53e0/propcache-0.5.2-cp314-cp314t-win_arm64.whl", hash = "sha256:fe67a3d11cd9b4efabfa45c3d00ffba2b26811442a73a581a94b67c2b5faccf6", size = 41140, upload-time = "2026-05-08T21:02:09.065Z" },
     { url = "https://files.pythonhosted.org/packages/3a/ed/1cdcab6ba3d6ab7feca11fc14f0eeea80755bb53ef4e892079f31b10a25f/propcache-0.5.2-py3-none-any.whl", hash = "sha256:be1ddfcbb376e3de5d2e2db1d58d6d67463e6b4f9f040c000de8e300295465fe", size = 14036, upload-time = "2026-05-08T21:02:10.673Z" },
-]
-
-[[package]]
-name = "pscript"
-version = "0.7.7"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/59/68/f918702e270eddc5f7c54108f6a2f2afc2d299985820dbb0db9beb77d66d/pscript-0.7.7.tar.gz", hash = "sha256:8632f7a4483f235514aadee110edee82eb6d67336bf68744a7b18d76e50442f8", size = 176138, upload-time = "2022-01-10T10:55:02.559Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f1/bc/980e2ebd442d2a8f1d22780f73db76f2a1df3bf79b3fb501b054b4b4dd03/pscript-0.7.7-py3-none-any.whl", hash = "sha256:b0fdac0df0393a4d7497153fea6a82e6429f32327c4c0a4817f1cd68adc08083", size = 126689, upload-time = "2022-01-10T10:55:00.793Z" },
 ]
 
 [[package]]
@@ -2336,6 +2330,18 @@ wheels = [
 ]
 
 [[package]]
+name = "tinycss2"
+version = "1.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "webencodings" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a3/ae/2ca4913e5c0f09781d75482874c3a95db9105462a92ddd303c7d285d3df2/tinycss2-1.5.1.tar.gz", hash = "sha256:d339d2b616ba90ccce58da8495a78f46e55d4d25f9fd71dfd526f07e7d53f957", size = 88195, upload-time = "2025-11-23T10:29:10.082Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/60/45/c7b5c3168458db837e8ceab06dc77824e18202679d0463f0e8f002143a97/tinycss2-1.5.1-py3-none-any.whl", hash = "sha256:3415ba0f5839c062696996998176c4a3751d18b7edaaeeb658c9ce21ec150661", size = 28404, upload-time = "2025-11-23T10:29:08.676Z" },
+]
+
+[[package]]
 name = "tomli"
 version = "2.4.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2504,18 +2510,6 @@ wheels = [
 ]
 
 [[package]]
-name = "vbuild"
-version = "0.8.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pscript" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/22/be/f0c6204a36440bbcc086bfa25964d009b7391c5a3c74d6e73188efd47adb/vbuild-0.8.2.tar.gz", hash = "sha256:270cd9078349d907dfae6c0e6364a5a5e74cb86183bb5093613f12a18b435fa9", size = 8937, upload-time = "2023-08-03T09:26:36.196Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/3d/7b22abbdb059d551507275a2815bc2b1974e3b9f6a13781c1eac9e858965/vbuild-0.8.2-py2.py3-none-any.whl", hash = "sha256:d76bcc976a1c53b6a5776ac947606f9e7786c25df33a587ebe33ed09dd8a1076", size = 9371, upload-time = "2023-08-03T09:26:35.023Z" },
-]
-
-[[package]]
 name = "watchfiles"
 version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2630,6 +2624,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/27/0b/a54103cfd732bb703c7a749222011a0483ef3705948dae3b203158601119/watchfiles-1.2.0-pp311-pypy311_pp73-macosx_11_0_arm64.whl", hash = "sha256:094b9b70103d4e963499bdea001ee3c2697b144cd9ae6218a62c0f89ec9e31db", size = 396629, upload-time = "2026-05-18T04:32:03.268Z" },
     { url = "https://files.pythonhosted.org/packages/5e/2c/73f31a3b893886206c3f54d73e8ad8dee58cdb2f69ad2622e0a8a9e07f4e/watchfiles-1.2.0-pp311-pypy311_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:b0ef001f8c25ad0fa9529f914c1600647ecd0f542d11c19b7894768c67b6acb7", size = 457318, upload-time = "2026-05-18T04:31:01.932Z" },
     { url = "https://files.pythonhosted.org/packages/e9/f9/45d021e4a5cc7b9dd567f7cbb06d3b75f751a690063fb6cc7ec60f4e46b7/watchfiles-1.2.0-pp311-pypy311_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a88fc94e647bc4eec523f1caa540258eb71d14278b9daf72fa1e2658a98df0f0", size = 457771, upload-time = "2026-05-18T04:30:56.331Z" },
+]
+
+[[package]]
+name = "webencodings"
+version = "0.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d5/a0/8fd707bcb776a7be556bad06a2ea5fb9bd519df78ef8e26f70ccf0f38bff/webencodings-0.6.1.tar.gz", hash = "sha256:565f9ad031c702dae404e27a099e3e09186a3ab1b9520f06d215502b651fd910", size = 15001, upload-time = "2026-08-15T14:22:57.549Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/77/c6/040cbc72480d789a5f40d63fb484d3106554c4dfa2d2b70ad5022057750f/webencodings-0.6.1-py3-none-any.whl", hash = "sha256:7fab6269c8bf237c657876b52058ccb182e861518d1c695c1a9aaa8c1c105d5b", size = 8745, upload-time = "2026-08-15T14:22:56.31Z" },
 ]
 
 [[package]]
